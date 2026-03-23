@@ -1,0 +1,8 @@
+numpy
+scipy
+statsmodels
+pandas
+langgraph
+langchain-core
+openai
+anthropic

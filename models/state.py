@@ -3,10 +3,11 @@ from typing import TypedDict, Optional
 
 class DimensionResult(TypedDict):
     dimension: str          # e.g. "missing_value", "trend", "anomaly"
-    score_A: float          # 0~1, higher = better quality
-    score_B: float
+    winner: str             # "A" | "B" | "tie"
+    confidence: float       # 0~1, how certain the comparison is
     evidence: dict          # raw tool outputs
     conclusion: str         # brief text summary
+    messages: list          # full ReAct message chain for this dimension
 
 
 class AgentState(TypedDict):
@@ -15,6 +16,7 @@ class AgentState(TypedDict):
 
     # ── Perceiver output ───────────────────────────────────────────────────
     planned_dimensions: list[str]   # dimensions to assess, e.g. ["missing_value", "trend"]
+    perception_summary: str         # Perceiver's natural-language observation of A vs B
 
     # ── Inspector output ───────────────────────────────────────────────────
     dimension_results: list[DimensionResult]
@@ -33,5 +35,4 @@ class AgentState(TypedDict):
 
     # ── Message history (per-agent conversation) ──────────────────────────
     perceiver_messages: list
-    inspector_messages: list
     adjudicator_messages: list

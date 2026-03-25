@@ -5,6 +5,8 @@ Pattern-structure detection tools:
   - spike_detector
   - change_point_detector
   - pattern_consistency_indicators
+  - stationarity_test
+  - autocorr
 """
 import numpy as np
 from typing import Union
@@ -199,41 +201,61 @@ def spike_detector(series: Series, threshold: float = 3.0, min_sep: int = 1) -> 
 
 # ── Change Points ─────────────────────────────────────────────────────────────
 
-def change_point_detector(series: Series) -> dict:
+def change_point_detector(series: Series, penalty: float = None, n_cp: int = None) -> dict:
     """
-    Detect structural change points using CUSUM (cumulative sum) method.
+    Detect structural change points using ruptures PELT algorithm (l2 model).
+    Falls back to CUSUM if ruptures is not installed.
+
+    Parameters
+    ----------
+    penalty : float | None
+        Penalty value for PELT (controls sensitivity). Default: 3 * log(n).
+    n_cp : int | None
+        If provided, use Binseg to find exactly this many change points.
 
     Returns
     -------
     {
         "change_point_count": int,
         "change_point_indices": list[int],
-        "max_cusum": float,
+        "method": str,
     }
     """
     arr = _fill_nan(_to_array(series))
     n = len(arr)
     if n < 4:
-        return {"change_point_count": 0, "change_point_indices": [], "max_cusum": 0.0}
+        return {"change_point_count": 0, "change_point_indices": [], "method": "none"}
 
-    mean = np.mean(arr)
-    cusum = np.cumsum(arr - mean)
-    cusum_abs = np.abs(cusum)
-
-    # Detect peaks in |CUSUM|
-    threshold = np.std(cusum_abs) * 1.5
-    cps = []
-    for i in range(1, n - 1):
-        if (cusum_abs[i] > cusum_abs[i - 1] and
-                cusum_abs[i] > cusum_abs[i + 1] and
-                cusum_abs[i] > threshold):
-            cps.append(int(i))
-
-    return {
-        "change_point_count": len(cps),
-        "change_point_indices": cps,
-        "max_cusum": round(float(np.max(cusum_abs)), 6),
-    }
+    try:
+        import ruptures as rpt
+        signal = arr.reshape(-1, 1)
+        if n_cp is not None:
+            algo = rpt.Binseg(model="l2").fit(signal)
+            breakpoints = algo.predict(n_bkps=n_cp)
+        else:
+            pen = penalty if penalty is not None else 3 * np.log(n)
+            algo = rpt.Pelt(model="l2").fit(signal)
+            breakpoints = algo.predict(pen=pen)
+        # ruptures returns indices of the END of each segment; last entry == n
+        cps = sorted([int(b) for b in breakpoints if b < n])
+        return {
+            "change_point_count": len(cps),
+            "change_point_indices": cps,
+            "method": "ruptures_pelt" if n_cp is None else "ruptures_binseg",
+        }
+    except ImportError:
+        # Fallback: CUSUM
+        mean = np.mean(arr)
+        cusum = np.cumsum(arr - mean)
+        cusum_abs = np.abs(cusum)
+        threshold = np.std(cusum_abs) * 1.5
+        cps = [
+            int(i) for i in range(1, n - 1)
+            if cusum_abs[i] > cusum_abs[i - 1]
+            and cusum_abs[i] > cusum_abs[i + 1]
+            and cusum_abs[i] > threshold
+        ]
+        return {"change_point_count": len(cps), "change_point_indices": cps, "method": "cusum_fallback"}
 
 
 # ── Pattern Consistency ───────────────────────────────────────────────────────
@@ -285,4 +307,76 @@ def pattern_consistency_indicators(series: Series) -> dict:
         "flat_spots": flat_spots,
         "crossing_points": crossings,
         "crossing_rate": crossing_rate,
+    }
+
+
+# ── Stationarity ──────────────────────────────────────────────────────────────
+
+def stationarity_test(series: Series, test: str = "adf") -> dict:
+    """
+    Test whether the series is stationary using ADF or KPSS.
+
+    Parameters
+    ----------
+    test : str   "adf" (Augmented Dickey-Fuller) or "kpss".
+
+    Returns
+    -------
+    {
+        "test": str,
+        "statistic": float,
+        "p_value": float,
+        "is_stationary": bool,
+    }
+    """
+    arr = _fill_nan(_to_array(series))
+    valid = arr[~np.isnan(arr)]
+    if len(valid) < 10:
+        return {"test": test, "statistic": float("nan"), "p_value": float("nan"), "is_stationary": None}
+
+    try:
+        if test == "kpss":
+            from statsmodels.tsa.stattools import kpss
+            stat, p_value, _, _ = kpss(valid, regression="c", nlags="auto")
+            is_stationary = bool(p_value > 0.05)
+        else:
+            from statsmodels.tsa.stattools import adfuller
+            stat, p_value, _, _, _, _ = adfuller(valid, autolag="AIC")
+            is_stationary = bool(p_value < 0.05)
+        return {
+            "test": test,
+            "statistic": round(float(stat), 6),
+            "p_value": round(float(p_value), 6),
+            "is_stationary": is_stationary,
+        }
+    except Exception as e:
+        return {"test": test, "statistic": float("nan"), "p_value": float("nan"), "is_stationary": None, "error": str(e)}
+
+
+# ── Autocorrelation ───────────────────────────────────────────────────────────
+
+def autocorr(series: Series, lag: int = 1) -> dict:
+    """
+    Compute autocorrelation at a specific lag.
+
+    Parameters
+    ----------
+    lag : int   Lag value (must be > 0 and < len(series)).
+
+    Returns
+    -------
+    {
+        "lag": int,
+        "autocorrelation": float,   # -1 to 1
+    }
+    """
+    arr = _fill_nan(_to_array(series))
+    n = len(arr)
+    if lag <= 0 or lag >= n:
+        return {"lag": lag, "autocorrelation": float("nan"), "error": f"lag must be between 1 and {n - 1}"}
+
+    corr = float(np.corrcoef(arr[:-lag], arr[lag:])[0, 1])
+    return {
+        "lag": lag,
+        "autocorrelation": round(corr, 6),
     }

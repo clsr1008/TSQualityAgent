@@ -78,11 +78,10 @@ def run_pipeline(input_data: dict, llm: BaseLLM, config: Config = None) -> dict:
     ----------
     input_data : dict
         {
-            "task_prompt": str,
             "dataset_description": str,
-            "timestamps": list (optional),
             "series_A": list[float],
             "series_B": list[float],
+            "timestamps": list (optional),
             "external_variables": dict (optional),
         }
 
@@ -95,6 +94,7 @@ def run_pipeline(input_data: dict, llm: BaseLLM, config: Config = None) -> dict:
     initial_state: AgentState = {
         "input": input_data,
         "planned_dimensions": [],
+        "perception_summary": "",
         "dimension_results": [],
         "reflection_type": None,
         "reflection_feedback": None,
@@ -103,9 +103,8 @@ def run_pipeline(input_data: dict, llm: BaseLLM, config: Config = None) -> dict:
         "replan_count": 0,
         "final_result": None,
         "perceiver_messages": [],
-        "inspector_messages": [],
         "adjudicator_messages": [],
     }
 
     final_state = app.invoke(initial_state)
-    return final_state.get("final_result", {})
+    return final_state

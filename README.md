@@ -5,7 +5,7 @@
 ## 系统架构
 
 ```
-输入 (series_A, series_B, task_prompt, ...)
+输入 (series_A, series_B, dataset_description, ...)
         │
         ▼
   Perceiver（感知 + 规划）
@@ -77,18 +77,16 @@ python main.py
 from config import Config, build_llm
 from workflow import run_pipeline
 
-cfg = Config(llm_backend="openai")
+cfg = Config(model="gpt-4o-mini", max_steps_per_dimension=6, max_recheck=2, max_replan=1)
 llm = build_llm(cfg)
 
 result = run_pipeline(
     input_data={
-        "task_prompt": "比较两段传感器数据的质量",
         "dataset_description": "工业温度传感器，1分钟采样，共120个时间步",
-        "series_A": [...],   # list[float]，支持 NaN
+        "series_A": [...],          # list[float]，支持 NaN
         "series_B": [...],
-        # 可选字段
-        "timestamps": [...],
-        "external_variables": {},
+        "timestamps": [...],        # 可选
+        "external_variables": {},   # 可选
     },
     llm=llm,
     config=cfg,
@@ -103,7 +101,8 @@ print(result["explanation"])  # 详细推理说明
 
 ```
 TSqualityAgent/
-├── main.py              # 入口 + 内置测试用例
+├── main.py              # 入口（argparse 参数控制）
+├── synthetic_cases.py   # 合成测试用例（bad/rare/pattern 三类）
 ├── workflow.py          # LangGraph 主工作流
 ├── config.py            # 全局配置
 ├── requirements.txt     # 依赖列表

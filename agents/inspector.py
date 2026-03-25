@@ -9,206 +9,67 @@ import json
 from models.state import AgentState, DimensionResult
 from models.llm import BaseLLM, LLMResponse
 from tools import NumpyEncoder
+from agents.dimensions import DIMENSION_GUIDE
+from agents.perceiver import _series_preview
 
-# ── Tool registry ─────────────────────────────────────────────────────────────
-
-from tools.bad_quality import missing_ratio, noise_profile, signal_to_noise_ratio
-from tools.rare_pattern import anomaly_detection, outlier_density
-from tools.pattern_structure import (
-    trend_classifier,
-    seasonality_detector,
-    spike_detector,
-    change_point_detector,
-    pattern_consistency_indicators,
-)
-
-TOOL_REGISTRY = {
-    "missing_ratio": missing_ratio,
-    "noise_profile": noise_profile,
-    "signal_to_noise_ratio": signal_to_noise_ratio,
-    "anomaly_detection": anomaly_detection,
-    "outlier_density": outlier_density,
-    "trend_classifier": trend_classifier,
-    "seasonality_detector": seasonality_detector,
-    "spike_detector": spike_detector,
-    "change_point_detector": change_point_detector,
-    "pattern_consistency_indicators": pattern_consistency_indicators,
-}
-
-# OpenAI-style function schemas for tool calling
-TOOL_SCHEMAS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "missing_ratio",
-            "description": "Compute fraction of missing (NaN) values in a series.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "series_name": {"type": "string", "enum": ["A", "B"]},
-                },
-                "required": ["series_name"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "noise_profile",
-            "description": "Estimate noise level using rolling-window residuals.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "series_name": {"type": "string", "enum": ["A", "B"]},
-                    "window": {"type": "integer", "default": 5},
-                },
-                "required": ["series_name"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "signal_to_noise_ratio",
-            "description": "Compute signal-to-noise ratio (mean/std).",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "series_name": {"type": "string", "enum": ["A", "B"]},
-                },
-                "required": ["series_name"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "anomaly_detection",
-            "description": "Detect point anomalies using Z-score threshold.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "series_name": {"type": "string", "enum": ["A", "B"]},
-                    "anomaly_threshold": {"type": "number", "default": 3.0},
-                },
-                "required": ["series_name"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "outlier_density",
-            "description": "Estimate outlier density using IQR fences.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "series_name": {"type": "string", "enum": ["A", "B"]},
-                },
-                "required": ["series_name"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "trend_classifier",
-            "description": "Classify trend direction and strength via linear regression.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "series_name": {"type": "string", "enum": ["A", "B"]},
-                    "window": {"type": "integer"},
-                },
-                "required": ["series_name"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "seasonality_detector",
-            "description": "Detect dominant seasonal period via autocorrelation.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "series_name": {"type": "string", "enum": ["A", "B"]},
-                    "max_period": {"type": "integer"},
-                },
-                "required": ["series_name"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "spike_detector",
-            "description": "Detect spikes (large amplitude excursions) by Z-score.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "series_name": {"type": "string", "enum": ["A", "B"]},
-                    "threshold": {"type": "number", "default": 3.0},
-                    "min_sep": {"type": "integer", "default": 1},
-                },
-                "required": ["series_name"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "change_point_detector",
-            "description": "Detect structural change points using CUSUM.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "series_name": {"type": "string", "enum": ["A", "B"]},
-                },
-                "required": ["series_name"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "pattern_consistency_indicators",
-            "description": "Compute lumpiness, flat_spots, and crossing_points.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "series_name": {"type": "string", "enum": ["A", "B"]},
-                },
-                "required": ["series_name"],
-            },
-        },
-    },
-]
+from tools.registry import TOOL_REGISTRY, TOOL_SCHEMAS
 
 # ── Prompts ───────────────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """You are the Inspector agent in a time series quality assessment pipeline.
+SYSTEM_PROMPT = f"""You are the Inspector agent in a time series quality assessment pipeline.
 
-You assess specific quality dimensions of two time series (A and B) by calling tools.
+You assess a specific quality dimension of two time series (A and B) by calling tools.
 For each dimension, follow the ReAct loop:
   Thought: what you plan to do and why
   Action: call one or more tools
   Observation: interpret the tool results
+{DIMENSION_GUIDE}
+Tool hints per dimension:
+  missing_value       → missing_ratio
+  noise_level         → noise_profile (includes noise_type: white/red), signal_to_noise_ratio, volatility
+  rare_pattern        → anomaly_detection, outlier_density
+  trend               → trend_classifier, change_point_detector
+  frequency           → seasonality_detector, autocorr (confirm periodicity at specific lag)
+  amplitude           → spike_detector, signal_to_noise_ratio, volatility
+  pattern_consistency → pattern_consistency_indicators, change_point_detector, stationarity_test
+  any dimension       → range_stats (analyse a specific time window or segment)
 
-Continue until you have sufficient evidence for the dimension, then output your conclusion
+Continue until you have sufficient evidence, then output your conclusion
 in the following JSON format (as the last message):
-{
+{{
   "dimension": "<dimension_name>",
-  "score_A": <0.0 to 1.0>,
-  "score_B": <0.0 to 1.0>,
-  # 改成confidence
-  # 最终也是汇总结果也是得到成对比较结果（二元）加上confidence（0-1文章）
-  "evidence": { ... },
-  "conclusion": "<brief comparison sentence>"
-}
+  "winner": "A" | "B" | "tie",
+  "confidence": <0.0 to 1.0>,
+  "evidence": {{ ... }},
+  "conclusion": "<one sentence explaining why the winner is better on this dimension>"
+}}
 
-Score interpretation: 1.0 = perfect quality, 0.0 = very poor quality.
+confidence interpretation: 1.0 = completely certain, 0.0 = no difference detected.
 Output ONLY valid JSON as your final response — no extra text."""
+
+
+def _annotate_react_roles(messages: list) -> list:
+    """Add react_role to each message for display purposes (does not affect API calls)."""
+    annotated = []
+    for i, m in enumerate(messages):
+        role = m.get("role", "")
+        if role == "system":
+            react_role = "system"
+        elif role == "user":
+            react_role = "query"
+        elif role == "assistant":
+            if m.get("tool_calls"):
+                react_role = "action"
+            elif i == len(messages) - 1:
+                react_role = "final_answer"
+            else:
+                react_role = "thought"
+        elif role == "tool":
+            react_role = "observation"
+        else:
+            react_role = role
+        annotated.append({**m, "react_role": react_role})
+    return annotated
 
 
 def _call_tool(tool_name: str, args: dict, series_A: list, series_B: list):
@@ -234,11 +95,23 @@ def _assess_dimension(
     series_B: list,
     llm: BaseLLM,
     max_steps: int,
+    perception_summary: str = "",
     feedback: str = "",
 ) -> DimensionResult:
     """Run the ReAct loop for a single quality dimension."""
 
-    user_msg = f"Assess the '{dimension}' quality dimension for series A and B."
+    preview_A = _series_preview(series_A)
+    preview_B = _series_preview(series_B)
+
+    user_msg = (
+        f"Assess the '{dimension}' quality dimension for series A and B.\n\n"
+        f"Series A ({len(series_A)} points{', sampled' if len(series_A) > 200 else ''}):\n"
+        f"{json.dumps(preview_A)}\n\n"
+        f"Series B ({len(series_B)} points{', sampled' if len(series_B) > 200 else ''}):\n"
+        f"{json.dumps(preview_B)}"
+    )
+    if perception_summary:
+        user_msg += f"\n\nContext from Perceiver: {perception_summary}"
     if feedback:
         user_msg += f"\n\nAdditional guidance from Adjudicator: {feedback}"
 
@@ -249,7 +122,8 @@ def _assess_dimension(
 
     evidence = {}
     conclusion = ""
-    score_A, score_B = 0.5, 0.5
+    winner = "tie"
+    confidence = 0.0
 
     for step in range(max_steps):
         response: LLMResponse = llm.chat_with_tools(messages, TOOL_SCHEMAS)
@@ -282,23 +156,30 @@ def _assess_dimension(
                     "content": json.dumps(obs, cls=NumpyEncoder),
                 })
         else:
-            # LLM gave a final text response — try to parse as conclusion JSON
+            # Text response: try to parse as Final Answer JSON.
+            # If it parses with the required fields → this is F (Final Answer), exit.
+            # Otherwise it is a Thought → append and continue the ReAct loop.
             try:
                 parsed = json.loads(response.content)
-                score_A = float(parsed.get("score_A") or 0.5)
-                score_B = float(parsed.get("score_B") or 0.5)
-                evidence.update(parsed.get("evidence", {}))
-                conclusion = parsed.get("conclusion", "")
+                if "winner" in parsed and "conclusion" in parsed:
+                    winner = parsed.get("winner") or "tie"
+                    confidence = float(parsed.get("confidence") or 0.0)
+                    evidence.update(parsed.get("evidence", {}))
+                    conclusion = parsed.get("conclusion", "")
+                    messages.append({"role": "assistant", "content": response.content})
+                    break
             except (json.JSONDecodeError, ValueError):
-                conclusion = response.content
-            break
+                pass
+            # Treat as Thought — append and let the loop continue
+            messages.append({"role": "assistant", "content": response.content})
 
     return DimensionResult(
         dimension=dimension,
-        score_A=round(score_A, 4),
-        score_B=round(score_B, 4),
+        winner=winner,
+        confidence=round(confidence, 4),
         evidence=evidence,
         conclusion=conclusion,
+        messages=_annotate_react_roles(messages),
     )
 
 
@@ -311,6 +192,7 @@ def run_inspector(state: AgentState, llm: BaseLLM, max_steps: int = 6) -> dict:
 
     reflection_type = state.get("reflection_type")
     feedback = state.get("reflection_feedback", "")
+    perception_summary = state.get("perception_summary", "")
 
     # Determine which dimensions to process
     if reflection_type == "needs_recheck":
@@ -321,9 +203,8 @@ def run_inspector(state: AgentState, llm: BaseLLM, max_steps: int = 6) -> dict:
     # Merge results: keep old results for dims not being rechecked
     existing = {r["dimension"]: r for r in state.get("dimension_results", [])}
 
-    new_results = []
     for dim in dims_to_run:
-        result = _assess_dimension(dim, series_A, series_B, llm, max_steps, feedback)
+        result = _assess_dimension(dim, series_A, series_B, llm, max_steps, perception_summary, feedback)
         existing[dim] = result
 
     dimension_results = list(existing.values())

@@ -1,7 +1,9 @@
 numpy
 scipy
 statsmodels
+ruptures
 pandas
+matplotlib
 langgraph
 langchain-core
 openai

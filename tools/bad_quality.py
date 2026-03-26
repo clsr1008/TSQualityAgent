@@ -2,7 +2,6 @@
 Bad-quality detection tools:
   - missing_ratio
   - noise_profile
-  - signal_to_noise_ratio
   - volatility
   - range_stats
 """
@@ -22,21 +21,13 @@ def missing_ratio(series: Series) -> dict:
 
     Returns
     -------
-    {
-        "missing_ratio": float,      # 0–1
-        "missing_count": int,
-        "total_count": int,
-    }
+    {"missing_ratio": float}   # 0–1
     """
     arr = _to_array(series)
     total = len(arr)
     missing = int(np.sum(np.isnan(arr)))
     ratio = missing / total if total > 0 else 0.0
-    return {
-        "missing_ratio": round(ratio, 4),
-        "missing_count": missing,
-        "total_count": total,
-    }
+    return {"missing_ratio": round(ratio, 4)}
 
 
 def noise_profile(series: Series, window: int = 5) -> dict:
@@ -85,31 +76,6 @@ def noise_profile(series: Series, window: int = 5) -> dict:
         "noise_type": noise_type,
     }
 
-
-def signal_to_noise_ratio(series: Series) -> dict:
-    """
-    SNR = mean / std (a simple proxy for SNR in 1-D time series).
-
-    Returns
-    -------
-    {
-        "snr": float,       # higher = cleaner signal
-        "mean": float,
-        "std": float,
-    }
-    """
-    arr = _to_array(series)
-    valid = arr[~np.isnan(arr)]
-    if len(valid) == 0:
-        return {"snr": float("nan"), "mean": float("nan"), "std": float("nan")}
-    mean = float(np.mean(valid))
-    std = float(np.std(valid))
-    snr = abs(mean) / std if std > 0 else float("inf")
-    return {
-        "snr": round(snr, 4),
-        "mean": round(mean, 6),
-        "std": round(std, 6),
-    }
 
 
 def volatility(series: Series, window: int = 5) -> dict:

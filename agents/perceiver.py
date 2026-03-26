@@ -76,7 +76,7 @@ def _series_preview(series: list, max_full: int = 200, sample_size: int = 60) ->
     first 20 + evenly-spaced middle points + last 20, totalling ~sample_size values.
     NaN is preserved as null for JSON serialisation.
     """
-    arr = [None if (isinstance(v, float) and v != v) else round(v, 4)
+    arr = [None if (v is None or (isinstance(v, float) and v != v)) else round(v, 4)
            for v in series]
     if len(arr) <= max_full:
         return arr

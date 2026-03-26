@@ -24,16 +24,7 @@ For each dimension, follow the ReAct loop:
   Action: call one or more tools
   Observation: interpret the tool results
 {DIMENSION_GUIDE}
-Tool hints per dimension:
-  missing_value       → missing_ratio
-  noise_level         → noise_profile (includes noise_type: white/red), signal_to_noise_ratio, volatility
-  rare_pattern        → anomaly_detection, outlier_density
-  trend               → trend_classifier, change_point_detector
-  frequency           → seasonality_detector, autocorr (confirm periodicity at specific lag)
-  amplitude           → spike_detector, signal_to_noise_ratio, volatility
-  pattern_consistency → pattern_consistency_indicators, change_point_detector, stationarity_test
-  any dimension       → range_stats (analyse a specific time window or segment)
-
+Stop calling tools as soon as you have sufficient evidence to reach a confident conclusion.
 Continue until you have sufficient evidence, then output your conclusion
 in the following JSON format (as the last message):
 {{

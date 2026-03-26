@@ -29,20 +29,29 @@ DIMENSION_GUIDE = """
 
 ### Pattern Structure  (structural richness — clearer, more consistent = better)
 - **trend**
-  A clear, sustained directional movement (upward or downward) over time with minimal
-  noise or random fluctuations. A flat or erratic series lacks trend quality.
+  Clear, sustained directional movement over time with minimal noise or random
+  fluctuations. A series has high trend quality as long as it maintains a discernible
+  direction during meaningful periods — the overall direction need not be constant.
+  What reduces quality is an absence of any clear direction: flat, erratic, or
+  noise-dominated behaviour throughout.
 
 - **frequency**
   Regular oscillations, periodic behavior, or repetitive cycles that are consistent
   across the series with minimal noise. Irregular or absent periodicity = low quality.
+  A high-quality periodic signal has energy concentrated in a few dominant frequencies
+  (low spectral entropy); a noisy pseudo-periodic signal spreads energy across many
+  frequencies (high spectral entropy).
 
 - **amplitude**
-  Consistent and well-defined oscillation amplitude — significant and stable variations
-  in value range reflecting strong signal intensity with minimal noise. Small or
-  irregular variations = low amplitude quality.
+  Consistent and well-defined oscillation amplitude across cycles — the peak-to-trough
+  magnitude should be significant and stable from one cycle to the next (low coefficient
+  of variation). A high-quality amplitude signal is NOT merely "absence of spikes"; it
+  requires that each oscillation cycle has a comparable, well-defined swing.
+  Amplitude modulation (cycles growing or shrinking over time) reduces quality.
 
 - **pattern_consistency**
   Overall structural coherence: the series exhibits clear, repeatable patterns
   (trend, seasonality, cycles, or stable mean) while avoiding excessive noise, random
-  fluctuations, lumpiness, flat spots, or abrupt structural breaks.
+  fluctuations, lumpiness, flat spots, or abrupt structural breaks. A high-quality series
+  transitions gradually between values rather than jumping erratically.
 """

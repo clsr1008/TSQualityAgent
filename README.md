@@ -71,6 +71,22 @@ export OPENAI_API_KEY="sk-..."
 python main.py
 ```
 
+## 合成测试用例可视化
+
+```bash
+# 绘制全部 8 个 case，保存到 plots/synthetic_cases/
+python synthetic_cases.py
+
+# 只绘制指定 case（可选：missing / noise / rare_point / rare_contextual / trend / frequency / amplitude / pattern）
+python synthetic_cases.py --case trend
+
+# 保存同时弹窗显示
+python synthetic_cases.py --show
+
+# 指定输出目录
+python synthetic_cases.py --out my_plots
+```
+
 ## 自定义输入
 
 ```python

@@ -1,238 +1,366 @@
 """
 Synthetic pairwise test cases for TSqualityAgent.
 
-Each case isolates one quality aspect so the agent's behaviour
-can be validated dimension by dimension.
-In every case series A is the "good" reference; series B degrades
-only the targeted aspect while keeping everything else identical.
+Design principles:
+  - Both series share the same base signal; only one targeted aspect is degraded in B
+  - Differences are intentionally subtle — not immediately obvious at a glance
+  - Dataset descriptions reflect realistic scenarios to support contextual reasoning
 
-Usage:
+Case taxonomy
+─────────────
+missing         : bad_quality — B has ~10% missing values, same noise as A
+noise           : bad_quality — B has elevated noise, no missing values
+rare_point      : rare_pattern — point anomalies that are clearly sensor artifacts
+rare_contextual : rare_pattern — contextual anomaly that reflects a real external event
+trend           : pattern_structure — B's trend clarity weakens in a middle segment
+frequency       : pattern_structure — B has phase jitter, making periodicity less pure
+amplitude       : pattern_structure — B shows amplitude modulation (growing oscillation size)
+pattern         : pattern_structure — B has higher local variance variability (lumpier)
+
+Usage
+─────
     from synthetic_cases import get_cases
-    cases = get_cases()          # list of (name, input_dict)
-    cases = get_cases("bad")     # filter by aspect tag
+    cases = get_cases()                 # all 8 cases
+    cases = get_cases("rare_point")     # single case by name
+
+    python synthetic_cases.py                   # plot all
+    python synthetic_cases.py --case trend      # plot one case by name
 """
+
 import math
-import random
+import numpy as np
 
 
-# ── Reproducible base signal generators ───────────────────────────────────────
+# ── Primitive signal generators ────────────────────────────────────────────────
 
-def _linspace(start: float, stop: float, n: int) -> list[float]:
-    if n == 1:
-        return [start]
-    step = (stop - start) / (n - 1)
-    return [start + i * step for i in range(n)]
+def _trend(n: int, start: float, end: float) -> np.ndarray:
+    return np.linspace(start, end, n)
 
 
-def _sine(n: int, cycles: float = 2.0, amplitude: float = 1.0) -> list[float]:
-    return [amplitude * math.sin(2 * math.pi * cycles * i / n) for i in range(n)]
+def _sine(n: int, period: float, amplitude: float = 1.0, phase: float = 0.0) -> np.ndarray:
+    t = np.arange(n)
+    return amplitude * np.sin(2 * math.pi * t / period + phase)
 
 
-def _noise(n: int, std: float, seed: int = 0) -> list[float]:
-    rng = random.Random(seed)
-    return [rng.gauss(0, std) for _ in range(n)]
+def _noise(n: int, std: float, seed: int) -> np.ndarray:
+    rng = np.random.default_rng(seed)
+    return rng.normal(0, std, n)
 
 
-def _add(a: list, b: list) -> list:
-    return [x + y for x, y in zip(a, b)]
+def _inject_missing(series: np.ndarray, ratio: float, seed: int) -> np.ndarray:
+    rng = np.random.default_rng(seed)
+    out = series.copy().astype(float)
+    idx = rng.choice(len(out), size=int(len(out) * ratio), replace=False)
+    out[idx] = np.nan
+    return out
 
 
-# ── Bad quality cases ──────────────────────────────────────────────────────────
+def _to_list(arr: np.ndarray) -> list:
+    return [None if np.isnan(v) else float(round(v, 4)) for v in arr]
 
-def case_missing_value(n: int = 100, missing_ratio: float = 0.25, seed: int = 1) -> tuple:
+
+# ── Bad quality ────────────────────────────────────────────────────────────────
+
+def case_missing(n: int = 150, seed: int = 1) -> tuple:
     """
-    B has ~25% missing values; A is clean.
-    Only dimension affected: missing_value.
+    A and B come from the same underlying source (sinusoidal + gentle trend).
+    B has ~6% missing values but the same noise level as A.
+    The degradation is purely in data completeness, not in measurement quality.
     """
-    base = _add(_linspace(0, 5, n), _noise(n, std=0.2, seed=seed))
+    shared = _sine(n, period=30, amplitude=2.0) + _trend(n, 0, 1.5)
 
-    series_a = base[:]
-
-    rng = random.Random(seed)
-    missing_idx = set(rng.sample(range(n), k=int(n * missing_ratio)))
-    series_b = [float("nan") if i in missing_idx else v for i, v in enumerate(base)]
+    # A and B get independent noise realisations on the same underlying signal
+    series_a = shared + _noise(n, std=0.2, seed=seed)
+    series_b = shared + _noise(n, std=0.2, seed=seed + 5)
+    series_b = _inject_missing(series_b, ratio=0.06, seed=seed + 20)
 
     return (
-        "bad_quality | missing_value (B has 25% NaN)",
+        "bad_quality | missing — B has ~6% missing, same noise as A",
         {
-            "dataset_description": f"Synthetic linear trend, n={n}, mild noise.",
-            "series_A": series_a,
-            "series_B": series_b,
+            "dataset_description": (
+                "Temperature readings from two co-located sensors over the same period. "
+                "Both sensors monitor the same physical process (daily heating cycle with "
+                "a slow seasonal drift)."
+            ),
+            "series_A": _to_list(series_a),
+            "series_B": _to_list(series_b),
             "external_variables": {},
         },
     )
 
 
-def case_noise_level(n: int = 100, seed: int = 2) -> tuple:
+def case_noise(n: int = 150, seed: int = 11) -> tuple:
     """
-    B has 8× higher noise than A; trend is identical.
-    Only dimension affected: noise_level.
+    A and B come from the same underlying source (sinusoidal + gentle trend).
+    B has significantly elevated noise but no missing values.
+    The degradation is purely in measurement precision, not in completeness.
     """
-    trend = _linspace(0, 5, n)
-    series_a = _add(trend, _noise(n, std=0.2, seed=seed))
-    series_b = _add(trend, _noise(n, std=1.6, seed=seed + 1))
+    base = _sine(n, period=30, amplitude=2.0) + _trend(n, 0, 1.5) + _noise(n, std=0.2, seed=seed)
+
+    series_a = base.copy()
+    # B: same base but noise std roughly doubled
+    series_b = base + _noise(n, std=0.55, seed=seed + 10)
 
     return (
-        "bad_quality | noise_level (B has 8× noise)",
+        "bad_quality | noise — B has elevated noise, no missing values",
         {
-            "dataset_description": f"Synthetic linear trend, n={n}, varying noise.",
-            "series_A": series_a,
-            "series_B": series_b,
+            "dataset_description": (
+                "Temperature readings from two co-located sensors over the same period. "
+                "Both sensors monitor the same physical process (daily heating cycle with "
+                "a slow seasonal drift)."
+            ),
+            "series_A": _to_list(series_a),
+            "series_B": _to_list(series_b),
             "external_variables": {},
         },
     )
 
 
-# ── Rare pattern cases ─────────────────────────────────────────────────────────
+# ── Rare pattern ───────────────────────────────────────────────────────────────
 
-def case_anomaly(n: int = 100, n_anomalies: int = 5, magnitude: float = 8.0, seed: int = 3) -> tuple:
+def case_rare_point(n: int = 150, seed: int = 2) -> tuple:
     """
-    B has point anomalies injected at fixed positions; A is clean.
-    Only dimension affected: rare_pattern.
+    Both series follow a smooth periodic signal.
+    B has 4 sudden point spikes at random positions (magnitude ~5–6 std),
+    occurring at times with no known external cause — clearly sensor artifacts.
     """
-    base = _add(_linspace(0, 3, n), _noise(n, std=0.3, seed=seed))
-    series_a = base[:]
+    base = _sine(n, period=25, amplitude=1.5) + _noise(n, std=0.25, seed=seed)
 
-    rng = random.Random(seed)
-    anomaly_idx = rng.sample(range(10, n - 10), k=n_anomalies)
-    series_b = base[:]
-    for i in anomaly_idx:
-        series_b[i] += magnitude * (1 if i % 2 == 0 else -1)
+    series_a = base.copy()
+    series_b = base.copy()
+
+    rng = np.random.default_rng(seed + 5)
+    spike_idx = rng.choice(np.arange(10, n - 10), size=4, replace=False)
+    signs = rng.choice([-1, 1], size=4)
+    magnitudes = rng.uniform(5.0, 6.5, size=4)   # ~5–6σ
+    for i, s, m in zip(spike_idx, signs, magnitudes):
+        series_b[i] += s * m
 
     return (
-        f"rare_pattern | anomaly (B has {n_anomalies} point anomalies, magnitude={magnitude})",
+        "rare_pattern | point anomaly — B has sensor-fault spikes",
         {
-            "dataset_description": f"Synthetic flat-trend signal, n={n}.",
-            "series_A": series_a,
-            "series_B": series_b,
+            "dataset_description": (
+                "Vibration sensor readings from two identical pumps running in parallel "
+                "under the same load conditions. Both pumps follow a stable periodic cycle."
+            ),
+            "series_A": _to_list(series_a),
+            "series_B": _to_list(series_b),
+            "external_variables": {
+                "operational_events": "none",
+                "sensor_flag": "Pump B sensor: calibration warning issued",
+            },
+        },
+    )
+
+
+def case_rare_contextual(n: int = 150, seed: int = 3) -> tuple:
+    """
+    Both series are financial-like (upward drift + volatility).
+    Around day 70–85, a real market event causes a sharp V-shaped drawdown in B
+    while A shows no response at all (e.g. a hedged instrument or heavily filtered feed).
+    The event is confirmed by external context.
+
+    Key tension: B's anomaly looks statistically unusual, but faithfully captures the
+    real-world event; A's flat response may actually reflect lower data fidelity.
+    """
+    rng = np.random.default_rng(seed)
+
+    # Shared base: gentle upward drift + correlated random walk
+    drift = _trend(n, 10.0, 14.0)
+    walk = np.cumsum(rng.normal(0, 0.15, n))
+    base = drift + walk
+
+    # A: no response to the event — completely flat through the window
+    series_a = base.copy()
+    event_start, event_end = 70, 85
+
+    # B: sharp V-shaped crash — more faithful to real event, A shows nothing
+    series_b = base.copy()
+    dip_b = np.zeros(n)
+    crash_bottom = 73
+    for i in range(event_start, crash_bottom):
+        t = (i - event_start) / (crash_bottom - event_start)
+        dip_b[i] = -2.5 * t                        # steep drop
+    for i in range(crash_bottom, event_end):
+        t = (i - crash_bottom) / (event_end - crash_bottom)
+        dip_b[i] = -2.5 * (1 - t)                  # rapid recovery
+    series_b += dip_b
+
+    # Add individual noise
+    series_a += _noise(n, std=0.12, seed=seed + 1)
+    series_b += _noise(n, std=0.18, seed=seed + 2)
+
+    return (
+        "rare_pattern | contextual anomaly — B captures real market crash, A shows no response",
+        {
+            "dataset_description": (
+                "Daily closing prices of two technology sector indices over a 150-day window. "
+                "Both instruments are exposed to the same macro environment."
+            ),
+            "series_A": _to_list(series_a),
+            "series_B": _to_list(series_b),
+            "external_variables": {
+                "market_event": (
+                    "A major regulatory announcement on day 70 triggered a sector-wide selloff. "
+                    "The index recovered within two weeks. Event is well-documented in filings."
+                ),
+            },
+        },
+    )
+
+
+# ── Pattern structure ──────────────────────────────────────────────────────────
+
+def case_trend(n: int = 150, seed: int = 4) -> tuple:
+    """
+    Both series have an overall upward trend.
+    B's trend becomes noisy and flat in the middle third, then resumes —
+    reducing per-segment trend clarity without removing the overall direction.
+    """
+    trend = _trend(n, 0, 6.0)
+    noise_a = _noise(n, std=0.3, seed=seed)
+    series_a = trend + noise_a
+
+    series_b = trend + _noise(n, std=0.3, seed=seed + 1)
+    # Middle third: replace with flat noisy plateau (weakened trend clarity)
+    mid_lo, mid_hi = n // 3, 2 * n // 3
+    plateau_val = float(series_b[mid_lo])
+    series_b[mid_lo:mid_hi] = plateau_val + _noise(mid_hi - mid_lo, std=0.9, seed=seed + 2)
+
+    return (
+        "pattern_structure | trend — B loses trend clarity mid-series",
+        {
+            "dataset_description": (
+                "Daily energy output (MWh) from two wind farms of similar capacity "
+                "over a 150-day period with a seasonal upward trend (increasing wind season)."
+            ),
+            "series_A": _to_list(series_a),
+            "series_B": _to_list(series_b),
             "external_variables": {},
         },
     )
 
 
-def case_outlier_density(n: int = 100, seed: int = 4) -> tuple:
+def case_frequency(n: int = 150, seed: int = 5) -> tuple:
     """
-    B is drawn from a heavy-tailed distribution (high outlier density);
-    A is near-Gaussian. Mean and trend identical.
-    Only dimension affected: outlier density.
+    Both series contain a dominant period-24 component.
+    A has one clear primary frequency with a weak harmonic (low spectral entropy).
+    B is a superposition of three frequencies of roughly equal strength —
+    no single dominant frequency, so spectral entropy is high.
     """
-    rng = random.Random(seed)
-    trend = _linspace(0, 3, n)
+    t = np.arange(n)
 
-    # A: Gaussian noise
-    series_a = [t + rng.gauss(0, 0.4) for t in trend]
+    # A: strong primary (period 24) + weak harmonic (period 8) — one dominant frequency
+    series_a = (2.0 * np.sin(2 * math.pi * t / 24.0)
+                + 0.3 * np.sin(2 * math.pi * t / 8.0)
+                + _noise(n, std=0.2, seed=seed))
 
-    # B: mix of Gaussian and occasional large jumps (Laplace-like)
-    series_b = []
-    for t in trend:
-        if rng.random() < 0.12:                         # 12% chance of large excursion
-            series_b.append(t + rng.uniform(3, 6) * rng.choice([-1, 1]))
-        else:
-            series_b.append(t + rng.gauss(0, 0.4))
+    # B: three components of comparable strength — no dominant frequency
+    series_b = (1.0 * np.sin(2 * math.pi * t / 24.0)
+                + 0.9 * np.sin(2 * math.pi * t / 15.0)
+                + 0.8 * np.sin(2 * math.pi * t / 9.0)
+                + _noise(n, std=0.2, seed=seed + 1))
 
     return (
-        "rare_pattern | outlier_density (B has heavy-tailed distribution)",
+        "pattern_structure | frequency — A has one dominant freq, B has multiple competing freqs",
         {
-            "dataset_description": f"Synthetic linear trend, n={n}.",
-            "series_A": series_a,
-            "series_B": series_b,
+            "dataset_description": (
+                "Hourly electricity demand (normalised) from two substations supplying "
+                "similar residential areas. Both follow a daily consumption cycle (period ≈ 24h)."
+            ),
+            "series_A": _to_list(series_a),
+            "series_B": _to_list(series_b),
             "external_variables": {},
         },
     )
 
 
-# ── Pattern structure cases ────────────────────────────────────────────────────
+def case_amplitude(n: int = 150, seed: int = 6) -> tuple:
+    """
+    Both series oscillate with period 20.
+    A has consistent peak and trough values across all cycles (low amplitude_cv).
+    B has the same period but each cycle's amplitude is drawn independently from a
+    wide range (0.4–2.8), so peaks and troughs vary greatly from cycle to cycle.
+    """
+    period = 20.0
+    rng = np.random.default_rng(seed + 3)
 
-def case_trend(n: int = 100, seed: int = 5) -> tuple:
-    """
-    A has a clear upward trend; B is mean-stationary (no trend).
-    Only dimension affected: trend.
-    """
-    noise = _noise(n, std=0.3, seed=seed)
-    series_a = _add(_linspace(0, 8, n), noise)
-    series_b = _add([4.0] * n, noise)          # same noise, no trend
+    # A: mostly consistent amplitude ~2.0 with slight per-cycle variation
+    rng_a = np.random.default_rng(seed + 2)
+    series_a = np.zeros(n)
+    pos = 0
+    while pos < n:
+        amp = rng_a.uniform(1.7, 2.3)
+        cycle_len = int(period)
+        for i in range(cycle_len):
+            if pos + i < n:
+                series_a[pos + i] = amp * math.sin(2 * math.pi * i / period)
+        pos += cycle_len
+    series_a += _noise(n, std=0.15, seed=seed)
+
+    # B: wider per-cycle amplitude variation — peaks and troughs noticeably inconsistent
+    series_b = np.zeros(n)
+    pos = 0
+    while pos < n:
+        amp = rng.uniform(0.8, 2.6)
+        cycle_len = int(period)
+        for i in range(cycle_len):
+            if pos + i < n:
+                series_b[pos + i] = amp * math.sin(2 * math.pi * i / period)
+        pos += cycle_len
+    series_b += _noise(n, std=0.15, seed=seed + 1)
 
     return (
-        "pattern_structure | trend (A has strong trend, B is flat)",
+        "pattern_structure | amplitude — A has consistent peaks/troughs, B varies widely per cycle",
         {
-            "dataset_description": f"Synthetic signal, n={n}.",
-            "series_A": series_a,
-            "series_B": series_b,
+            "dataset_description": (
+                "Pressure readings (bar) from two hydraulic pistons executing identical "
+                "reciprocating cycles (period ≈ 20 steps)."
+            ),
+            "series_A": _to_list(series_a),
+            "series_B": _to_list(series_b),
             "external_variables": {},
         },
     )
 
 
-def case_seasonality(n: int = 120, seed: int = 6) -> tuple:
+def case_pattern(n: int = 150, seed: int = 7) -> tuple:
     """
-    A has a clear periodic pattern; B is pure noise with the same variance.
-    Only dimension affected: frequency / seasonality.
+    Both series are stationary with similar mean and overall variance.
+    A is smooth with consistent local variance.
+    B has alternating low- and high-variance windows (lumpier),
+    making it structurally less coherent — a subtler degradation.
     """
-    noise = _noise(n, std=0.25, seed=seed)
-    series_a = _add(_sine(n, cycles=4, amplitude=2.0), noise)
-    series_b = _noise(n, std=2.0, seed=seed + 1)   # same std, no structure
+    rng = np.random.default_rng(seed)
+
+    # A: AR(1) with moderate, uniform noise — some variability but structurally consistent
+    series_a = np.zeros(n)
+    series_a[0] = rng.normal(2.0, 0.3)
+    for i in range(1, n):
+        series_a[i] = 0.7 * series_a[i - 1] + rng.normal(0.6, 0.40)  # AR(1), mean≈2
+
+    # B: same AR(1) base but variance alternates every ~20 steps (calm vs volatile)
+    series_b = np.zeros(n)
+    series_b[0] = rng.normal(2.0, 0.3)
+    for i in range(1, n):
+        window_idx = i // 20
+        local_std = 0.20 if window_idx % 2 == 0 else 0.85   # alternating calm/volatile
+        series_b[i] = 0.7 * series_b[i - 1] + rng.normal(0.6, local_std)
 
     return (
-        "pattern_structure | frequency (A has clear seasonality, B is noise)",
+        "pattern_structure | pattern — B has alternating variance (lumpier)",
         {
-            "dataset_description": f"Synthetic periodic vs. random signal, n={n}.",
-            "series_A": series_a,
-            "series_B": series_b,
-            "external_variables": {},
-        },
-    )
-
-
-def case_amplitude_spikes(n: int = 100, seed: int = 7) -> tuple:
-    """
-    B has frequent large spikes; A has smooth amplitude variation.
-    Only dimension affected: amplitude / spike.
-    """
-    base = _sine(n, cycles=2, amplitude=1.0)
-    noise = _noise(n, std=0.15, seed=seed)
-    series_a = _add(base, noise)
-
-    rng = random.Random(seed)
-    series_b = _add(base, noise)[:]
-    spike_positions = rng.sample(range(5, n - 5), k=8)
-    for i in spike_positions:
-        series_b[i] += rng.uniform(4, 7) * rng.choice([-1, 1])
-
-    return (
-        "pattern_structure | amplitude (B has frequent spikes)",
-        {
-            "dataset_description": f"Synthetic sinusoidal signal, n={n}.",
-            "series_A": series_a,
-            "series_B": series_b,
-            "external_variables": {},
-        },
-    )
-
-
-def case_pattern_consistency(n: int = 120, seed: int = 8) -> tuple:
-    """
-    A is stationary with consistent variance; B has two distinct regimes
-    (a structural change point at the midpoint).
-    Only dimension affected: pattern_consistency / change_point.
-    """
-    rng = random.Random(seed)
-    mid = n // 2
-
-    series_a = [rng.gauss(2.0, 0.4) for _ in range(n)]
-
-    # B: first half ~ N(2, 0.4), second half ~ N(6, 1.5)
-    series_b = (
-        [rng.gauss(2.0, 0.4) for _ in range(mid)]
-        + [rng.gauss(6.0, 1.5) for _ in range(n - mid)]
-    )
-
-    return (
-        "pattern_structure | consistency (B has a structural change point at midpoint)",
-        {
-            "dataset_description": f"Synthetic stationary vs. regime-shift signal, n={n}.",
-            "series_A": series_a,
-            "series_B": series_b,
-            "external_variables": {},
+            "dataset_description": (
+                "Air quality index (PM2.5, normalised) measured at two monitoring stations "
+                "in the same city district. Both stations record the same baseline air quality "
+                "with a stable long-run mean."
+            ),
+            "series_A": _to_list(series_a),
+            "series_B": _to_list(series_b),
+            "external_variables": {
+                "station_A_location": "park (away from traffic)",
+                "station_B_location": "roadside intersection",
+            },
         },
     )
 
@@ -240,28 +368,87 @@ def case_pattern_consistency(n: int = 120, seed: int = 8) -> tuple:
 # ── Registry ───────────────────────────────────────────────────────────────────
 
 _ALL_CASES = [
-    ("bad",      case_missing_value),
-    ("bad",      case_noise_level),
-    ("rare",     case_anomaly),
-    ("rare",     case_outlier_density),
-    ("pattern",  case_trend),
-    ("pattern",  case_seasonality),
-    ("pattern",  case_amplitude_spikes),
-    ("pattern",  case_pattern_consistency),
+    ("missing",         case_missing),
+    ("noise",           case_noise),
+    ("rare_point",      case_rare_point),
+    ("rare_contextual", case_rare_contextual),
+    ("trend",           case_trend),
+    ("frequency",       case_frequency),
+    ("amplitude",       case_amplitude),
+    ("pattern",         case_pattern),
 ]
 
+CASE_NAMES = [name for name, _ in _ALL_CASES]
 
-def get_cases(aspect: str = None) -> list[tuple[str, dict]]:
+
+def get_cases(case: str = None) -> list[tuple[str, dict]]:
     """
     Return a list of (case_name, input_dict) tuples.
 
     Parameters
     ----------
-    aspect : "bad" | "rare" | "pattern" | None
-        Filter by quality aspect. None returns all cases.
+    case : one of CASE_NAMES, or None to return all cases.
     """
-    results = []
-    for tag, fn in _ALL_CASES:
-        if aspect is None or tag == aspect:
-            results.append(fn())
-    return results
+    return [fn() for name, fn in _ALL_CASES if case is None or name == case]
+
+
+# ── Visualisation interface ────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    import argparse
+    import os
+    import matplotlib.pyplot as plt
+
+    parser = argparse.ArgumentParser(description="Preview synthetic test cases")
+    parser.add_argument(
+        "--case", default=None,
+        choices=CASE_NAMES,
+        help="Show only this case by name (default: all). "
+             f"Choices: {', '.join(CASE_NAMES)}",
+    )
+    parser.add_argument(
+        "--out", default="plots/synthetic_cases",
+        help="Directory to save plot images (default: plots/synthetic_cases)",
+    )
+    parser.add_argument(
+        "--show", action="store_true",
+        help="Also display plots interactively (default: save only)",
+    )
+    args = parser.parse_args()
+
+    cases = get_cases(args.case)
+    os.makedirs(args.out, exist_ok=True)
+
+    # Determine which case names map to the filtered results
+    filtered_names = [
+        name for name, fn in _ALL_CASES
+        if args.case is None or name == args.case
+    ]
+
+    for case_name, (title, inp) in zip(filtered_names, cases):
+        fig, ax = plt.subplots(figsize=(13, 3.2))
+
+        a = [v if v is not None else float("nan") for v in inp["series_A"]]
+        b = [v if v is not None else float("nan") for v in inp["series_B"]]
+        x = list(range(len(a)))
+
+        ax.plot(x, a, label="Series A", color="steelblue", linewidth=1.4)
+        ax.plot(x, b, label="Series B", color="tomato", alpha=0.85, linewidth=1.2)
+        ax.set_title(title, fontsize=9, pad=4)
+        ax.legend(fontsize=8, loc="upper left")
+        ax.grid(True, alpha=0.25)
+        ax.set_xlabel("time step", fontsize=8)
+
+        # Annotate missing values in B
+        missing_b = [i for i, v in enumerate(b) if math.isnan(v)]
+        if missing_b:
+            ax.scatter(missing_b, [ax.get_ylim()[0]] * len(missing_b),
+                       marker="|", color="tomato", s=30, label="_nolegend_")
+
+        plt.tight_layout(pad=1.5)
+        out_path = os.path.join(args.out, f"{case_name}.png")
+        fig.savefig(out_path, dpi=150)
+        print(f"Saved: {out_path}")
+        if args.show:
+            plt.show()
+        plt.close(fig)

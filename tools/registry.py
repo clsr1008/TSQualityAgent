@@ -5,33 +5,36 @@ TOOL_REGISTRY : maps function name → callable
 TOOL_SCHEMAS  : OpenAI function-calling schemas for all registered tools
 """
 
-from tools.bad_quality import missing_ratio, noise_profile, signal_to_noise_ratio, volatility, range_stats
-from tools.rare_pattern import anomaly_detection, outlier_density
+from tools.bad_quality import missing_ratio, noise_profile, volatility, range_stats
+from tools.rare_pattern import zscore_anomaly, outlier_density, mad_residual_anomaly, contextual_anomaly
 from tools.pattern_structure import (
     trend_classifier,
     seasonality_detector,
-    spike_detector,
     change_point_detector,
     pattern_consistency_indicators,
     stationarity_test,
     autocorr,
+    rolling_amplitude,
+    cycle_amplitude,
 )
 
 TOOL_REGISTRY = {
     "missing_ratio": missing_ratio,
     "noise_profile": noise_profile,
-    "signal_to_noise_ratio": signal_to_noise_ratio,
     "volatility": volatility,
     "range_stats": range_stats,
-    "anomaly_detection": anomaly_detection,
+    "zscore_anomaly": zscore_anomaly,
     "outlier_density": outlier_density,
+    "mad_residual_anomaly": mad_residual_anomaly,
+    "contextual_anomaly": contextual_anomaly,
     "trend_classifier": trend_classifier,
     "seasonality_detector": seasonality_detector,
-    "spike_detector": spike_detector,
     "change_point_detector": change_point_detector,
     "pattern_consistency_indicators": pattern_consistency_indicators,
     "stationarity_test": stationarity_test,
     "autocorr": autocorr,
+    "rolling_amplitude": rolling_amplitude,
+    "cycle_amplitude": cycle_amplitude,
 }
 
 # OpenAI-style function schemas for tool calling
@@ -40,7 +43,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "missing_ratio",
-            "description": "Compute fraction of missing (NaN) values in a series.",
+            "description": "Compute fraction of missing (NaN) values in a series. Returns {missing_ratio: 0–1}.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -60,20 +63,6 @@ TOOL_SCHEMAS = [
                 "properties": {
                     "series_name": {"type": "string", "enum": ["A", "B"]},
                     "window": {"type": "integer", "default": 5},
-                },
-                "required": ["series_name"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "signal_to_noise_ratio",
-            "description": "Compute signal-to-noise ratio (|mean|/std). Higher = cleaner signal.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "series_name": {"type": "string", "enum": ["A", "B"]},
                 },
                 "required": ["series_name"],
             },
@@ -114,7 +103,7 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
-            "name": "anomaly_detection",
+            "name": "zscore_anomaly",
             "description": "Detect rare point anomalies / outliers using Z-score threshold. Used for the rare_pattern dimension.",
             "parameters": {
                 "type": "object",
@@ -143,6 +132,49 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "mad_residual_anomaly",
+            "description": (
+                "Robust anomaly detection: detrend via rolling mean, then apply MAD-based scoring on residuals. "
+                "Fixes two Z-score weaknesses: (a) rolling mean removes local trend before scoring, "
+                "(b) MAD is outlier-resistant unlike std. "
+                "Better than zscore_anomaly for series with trends or seasonal drift."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "series_name": {"type": "string", "enum": ["A", "B"]},
+                    "window": {"type": "integer", "default": 15},
+                    "threshold": {"type": "number", "default": 3.5},
+                },
+                "required": ["series_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "contextual_anomaly",
+            "description": (
+                "Contextual anomaly detection: for each point, fit a linear trend on the preceding "
+                "context_window points and flag points with unusually large prediction errors (MAD-normalised). "
+                "Detects sudden breaks, V-shaped events, or step changes that look normal globally "
+                "but deviate sharply from local context. Use for rare_pattern when external context "
+                "suggests a real event may have occurred."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "series_name": {"type": "string", "enum": ["A", "B"]},
+                    "context_window": {"type": "integer", "default": 10},
+                    "threshold": {"type": "number", "default": 3.0},
+                },
+                "required": ["series_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "trend_classifier",
             "description": "Classify trend direction (increasing/decreasing/flat) and strength via linear regression (R²).",
             "parameters": {
@@ -159,7 +191,12 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "seasonality_detector",
-            "description": "Detect dominant seasonal period and strength via autocorrelation peak analysis.",
+            "description": (
+                "Detect dominant seasonal period via autocorrelation with prominence-based peak filtering "
+                "and harmonic suppression. Returns dominant_period, seasonal_strength, top_periods (non-harmonic), "
+                "dominance_ratio (peak1/peak2 strength — high means one frequency dominates, low means multiple "
+                "frequencies compete), and peak_count (number of significant independent peaks found)."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -188,22 +225,6 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
-            "name": "spike_detector",
-            "description": "Detect spikes (large amplitude excursions) by Z-score. Also returns overall amplitude range.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "series_name": {"type": "string", "enum": ["A", "B"]},
-                    "threshold": {"type": "number", "default": 3.0},
-                    "min_sep": {"type": "integer", "default": 1},
-                },
-                "required": ["series_name"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "change_point_detector",
             "description": "Detect structural change points using ruptures PELT (or CUSUM fallback). Fewer change points = more stable structure.",
             "parameters": {
@@ -221,7 +242,12 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "pattern_consistency_indicators",
-            "description": "Compute lumpiness, flat_spots, and crossing_rate to assess overall structural coherence.",
+            "description": (
+                "Compute structural coherence indicators: lumpiness (variance of per-window variances — "
+                "high = uneven volatility), flat_ratio (fraction of steps with negligible change), "
+                "longest_flat_ratio (longest stagnant plateau / n), crossing_rate (mean-crossing frequency), "
+                "and roughness (mean absolute step size — lower = smoother)."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -241,6 +267,47 @@ TOOL_SCHEMAS = [
                 "properties": {
                     "series_name": {"type": "string", "enum": ["A", "B"]},
                     "test": {"type": "string", "enum": ["adf", "kpss"], "default": "adf"},
+                },
+                "required": ["series_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "rolling_amplitude",
+            "description": (
+                "General-purpose amplitude measure for any series (periodic or not). "
+                "Slides a window over the series and computes local range (max - min) at each position. "
+                "Returns mean_local_range (average swing size), cv_local_range (consistency — lower = more stable amplitude), "
+                "max/min_local_range (burst vs quiet windows). "
+                "Use when cycle_amplitude returns oscillatory=False, or as a complement for non-periodic series."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "series_name": {"type": "string", "enum": ["A", "B"]},
+                    "window": {"type": "integer", "default": 20},
+                },
+                "required": ["series_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "cycle_amplitude",
+            "description": (
+                "Measure oscillation amplitude consistency via peak-trough analysis. "
+                "Returns oscillatory (bool gate — False means the series lacks clear oscillation and other fields are unreliable), "
+                "mean_amplitude, amplitude_cv (coefficient of variation — lower = more consistent cycles), "
+                "and amplitude_trend (growing/shrinking/stable). "
+                "Use for the amplitude dimension; check oscillatory=True before interpreting results."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "series_name": {"type": "string", "enum": ["A", "B"]},
                 },
                 "required": ["series_name"],
             },

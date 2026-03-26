@@ -5,12 +5,12 @@ import argparse
 from dataclasses import asdict
 from config import Config, build_llm
 from workflow import run_pipeline
-from synthetic_cases import get_cases
+from synthetic_cases import get_cases, CASE_NAMES
 from run_logger import save_run
 
 
 def hello_world():
-    print('Hello, World!')
+    print('Hello, TSQualityAgent!')
 
 
 if __name__ == "__main__":
@@ -28,11 +28,11 @@ if __name__ == "__main__":
 
     # ── Test case selection ────────────────────────────────────────────────────
     parser.add_argument(
-        "--aspect",
+        "--case",
         type=str,
-        default="bad",
-        choices=["all", "bad", "rare", "pattern"],
-        help="Quality aspect to test: all | bad | rare | pattern",
+        default=None,
+        choices=["all"] + CASE_NAMES,
+        help=f"Test case to run: all | {' | '.join(CASE_NAMES)} (default: all)",
     )
 
     # ── Inspector ─────────────────────────────────────────────────────────────
@@ -62,10 +62,10 @@ if __name__ == "__main__":
     cfg = Config.from_args(args)
     llm = build_llm(cfg)
 
-    aspect = None if args.aspect == "all" else args.aspect
-    test_cases = get_cases(aspect)
+    case = None if (args.case is None or args.case == "all") else args.case
+    test_cases = get_cases(case)
 
-    print(f"\nModel: {args.model}  |  Aspect: {args.aspect}  |  Cases: {len(test_cases)}")
+    print(f"\nModel: {args.model}  |  Case: {args.case or 'all'}  |  Cases: {len(test_cases)}")
 
     for name, input_data in test_cases:
         print(f"\n{'=' * 60}")

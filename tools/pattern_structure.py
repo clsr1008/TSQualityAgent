@@ -2,11 +2,12 @@
 Pattern-structure detection tools:
   - trend_classifier
   - seasonality_detector
-  - spike_detector
   - change_point_detector
   - pattern_consistency_indicators
   - stationarity_test
   - autocorr
+  - rolling_amplitude
+  - cycle_amplitude
 """
 import numpy as np
 from typing import Union
@@ -44,7 +45,6 @@ def trend_classifier(series: Series, window: int = None) -> dict:
         "direction": "increasing" | "decreasing" | "flat",
         "slope": float,
         "trend_strength": float,   # R² of linear fit, 0–1
-        "slope_per_step": float,
     }
     """
     arr = _fill_nan(_to_array(series))
@@ -68,11 +68,40 @@ def trend_classifier(series: Series, window: int = None) -> dict:
     else:
         direction = "decreasing"
 
+    # Per-segment trend clarity: split at change points, measure R² within each segment.
+    # A series with clear trends in every segment is high quality,
+    # regardless of whether the direction changes between segments.
+    cp_result = change_point_detector(arr)
+    breakpoints = [0] + cp_result["change_point_indices"] + [n]
+    seg_r2s = []
+    for i in range(len(breakpoints) - 1):
+        seg = arr[breakpoints[i]:breakpoints[i + 1]]
+        if len(seg) < 5:
+            continue
+        sx = np.arange(len(seg), dtype=float)
+        s_slope, s_intercept = np.polyfit(sx, seg, 1)
+        s_fitted = s_slope * sx + s_intercept
+        ss_res = np.sum((seg - s_fitted) ** 2)
+        ss_tot = np.sum((seg - np.mean(seg)) ** 2)
+        seg_r2s.append(max(0.0, 1 - ss_res / ss_tot) if ss_tot > 0 else 0.0)
+
+    if not seg_r2s:
+        segment_clarity = "unclear"
+    else:
+        mean_seg_r2 = float(np.mean(seg_r2s))
+        if mean_seg_r2 >= 0.6:
+            segment_clarity = "clear"      # each segment has a well-defined trend
+        elif mean_seg_r2 >= 0.25:
+            segment_clarity = "moderate"   # partial trend structure within segments
+        else:
+            segment_clarity = "unclear"    # segments are mostly flat or noisy
+
     return {
         "direction": direction,
         "slope": round(float(slope), 8),
         "trend_strength": round(float(max(r2, 0.0)), 4),
-        "slope_per_step": round(float(slope), 8),
+        "segment_clarity": segment_clarity,   # "clear" | "moderate" | "unclear"
+        "segment_count": len(seg_r2s),
     }
 
 
@@ -80,7 +109,8 @@ def trend_classifier(series: Series, window: int = None) -> dict:
 
 def seasonality_detector(series: Series, max_period: int = None) -> dict:
     """
-    Detect dominant seasonal period using autocorrelation.
+    Detect dominant seasonal period using autocorrelation with prominence-based
+    peak filtering and harmonic suppression.
 
     Parameters
     ----------
@@ -91,112 +121,80 @@ def seasonality_detector(series: Series, max_period: int = None) -> dict:
     -------
     {
         "dominant_period": int | None,
-        "seasonal_strength": float,    # peak autocorrelation at dominant period
-        "top_periods": list[int],       # top-3 candidate periods
+        "seasonal_strength": float,   # ACF value at dominant period (0–1)
+        "top_periods": list[int],     # top-3 non-harmonic candidate periods
+        "dominance_ratio": float,     # peak1_strength / peak2_strength; high = one freq dominates
+        "peak_count": int,            # number of significant non-harmonic peaks found
     }
     """
+    from scipy.signal import find_peaks
+
     arr = _fill_nan(_to_array(series))
     n = len(arr)
     if max_period is None:
         max_period = n // 2
     max_period = min(max_period, n - 1)
 
+    _empty = {"dominant_period": None, "seasonal_strength": 0.0,
+              "top_periods": [], "dominance_ratio": float("nan"), "peak_count": 0}
+
     if max_period < 2:
-        return {"dominant_period": None, "seasonal_strength": 0.0, "top_periods": []}
+        return _empty
 
     arr_norm = arr - np.mean(arr)
-    var = np.var(arr_norm)
+    var = float(np.var(arr_norm))
     if var == 0:
-        return {"dominant_period": None, "seasonal_strength": 0.0, "top_periods": []}
+        return _empty
 
-    acf = []
-    for lag in range(1, max_period + 1):
-        c = float(np.mean(arr_norm[lag:] * arr_norm[:-lag])) / var
-        acf.append((lag, c))
+    # Compute ACF for all lags
+    acf_vals = np.array([
+        float(np.mean(arr_norm[lag:] * arr_norm[:-lag])) / var
+        for lag in range(1, max_period + 1)
+    ])
 
-    # Find peaks (local maxima in positive territory)
-    acf_vals = np.array([c for _, c in acf])
-    peaks = []
-    for i in range(1, len(acf_vals) - 1):
-        if acf_vals[i] > acf_vals[i - 1] and acf_vals[i] > acf_vals[i + 1] and acf_vals[i] > 0:
-            peaks.append((acf[i][0], acf_vals[i]))
+    # Prominence-based peak detection: filters out shallow noise peaks
+    peak_indices, props = find_peaks(acf_vals, height=0.05, prominence=0.05)
+    if len(peak_indices) == 0:
+        return _empty
 
-    if not peaks:
-        return {"dominant_period": None, "seasonal_strength": 0.0, "top_periods": []}
+    # Sort by ACF value descending
+    order = np.argsort(-acf_vals[peak_indices])
+    sorted_lags = [(int(peak_indices[i]) + 1, float(acf_vals[peak_indices[i]])) for i in order]
 
-    peaks.sort(key=lambda x: -x[1])
-    dominant_period = peaks[0][0]
-    seasonal_strength = round(float(peaks[0][1]), 4)
-    top_periods = [p for p, _ in peaks[:3]]
+    # Harmonic suppression: keep a period only if it is not a near-integer multiple
+    # of an already-accepted stronger period (±10% tolerance)
+    accepted = []
+    for lag, strength in sorted_lags:
+        is_harmonic = any(
+            abs(lag / base - round(lag / base)) < 0.10 and round(lag / base) >= 2
+            for base, _ in accepted
+        )
+        if not is_harmonic:
+            accepted.append((lag, strength))
+
+    if not accepted:
+        return _empty
+
+    dominant_period = accepted[0][0]
+    seasonal_strength = round(accepted[0][1], 4)
+    top_periods = [p for p, _ in accepted[:3]]
+
+    # Dominance ratio: how much stronger is the top peak vs the second
+    if len(accepted) >= 2 and accepted[1][1] > 0:
+        dominance_ratio = round(accepted[0][1] / accepted[1][1], 3)
+    else:
+        dominance_ratio = float("inf") if len(accepted) == 1 else float("nan")
 
     return {
         "dominant_period": dominant_period,
         "seasonal_strength": seasonal_strength,
         "top_periods": top_periods,
+        "dominance_ratio": dominance_ratio,
+        "peak_count": len(accepted),
     }
 
 
 # ── Amplitude / Spikes ────────────────────────────────────────────────────────
-
-def spike_detector(series: Series, threshold: float = 3.0, min_sep: int = 1) -> dict:
-    """
-    Detect spikes (large amplitude excursions) using Z-score threshold.
-
-    Parameters
-    ----------
-    threshold  : Z-score threshold for a point to be a spike.
-    min_sep    : Minimum separation between detected spikes.
-
-    Returns
-    -------
-    {
-        "spike_count": int,
-        "spike_ratio": float,
-        "spike_indices": list[int],
-        "amplitude_range": float,   # max - min of valid values
-        "spike_mean_magnitude": float,
-    }
-    """
-    arr = _to_array(series)
-    valid = arr[~np.isnan(arr)]
-    if len(valid) < 3:
-        return {
-            "spike_count": 0, "spike_ratio": 0.0,
-            "spike_indices": [], "amplitude_range": float("nan"),
-            "spike_mean_magnitude": float("nan"),
-        }
-
-    mean, std = np.mean(valid), np.std(valid)
-    amp_range = float(np.max(valid) - np.min(valid))
-
-    if std == 0:
-        return {
-            "spike_count": 0, "spike_ratio": 0.0,
-            "spike_indices": [], "amplitude_range": amp_range,
-            "spike_mean_magnitude": 0.0,
-        }
-
-    z = np.abs((arr - mean) / std)
-    candidate_idx = list(np.where((z > threshold) & ~np.isnan(arr))[0])
-
-    # Apply min_sep suppression
-    spikes = []
-    last = -min_sep - 1
-    for idx in candidate_idx:
-        if idx - last >= min_sep:
-            spikes.append(int(idx))
-            last = idx
-
-    magnitudes = [abs(float(arr[i]) - mean) for i in spikes]
-    mean_mag = float(np.mean(magnitudes)) if magnitudes else 0.0
-
-    return {
-        "spike_count": len(spikes),
-        "spike_ratio": round(len(spikes) / len(arr), 4),
-        "spike_indices": spikes,
-        "amplitude_range": round(amp_range, 6),
-        "spike_mean_magnitude": round(mean_mag, 6),
-    }
 
 
 # ── Change Points ─────────────────────────────────────────────────────────────
@@ -270,10 +268,12 @@ def pattern_consistency_indicators(series: Series) -> dict:
     Returns
     -------
     {
-        "lumpiness": float,
-        "flat_spots": float,
-        "crossing_points": int,
-        "crossing_rate": float,
+        "lumpiness":          float,  # variance of per-window variances — higher = choppier variance
+        "flat_ratio":         float,  # fraction of steps with negligible change (< 0.1*std)
+        "longest_flat_ratio": float,  # longest consecutive flat run / n
+        "crossing_points":    int,
+        "crossing_rate":      float,
+        "roughness":          float,
     }
     """
     arr = _fill_nan(_to_array(series))
@@ -285,28 +285,40 @@ def pattern_consistency_indicators(series: Series) -> dict:
     var_list = [np.var(seg) for seg in windows if len(seg) == w]
     lumpiness = float(np.var(var_list)) if len(var_list) > 1 else 0.0
 
-    # Flat spots: longest run of values that round to the same integer
-    rounded = np.round(arr).astype(int)
-    max_run = 1
-    cur_run = 1
-    for i in range(1, n):
-        if rounded[i] == rounded[i - 1]:
+    # Flat spots: steps where |x[i+1] - x[i]| < 0.1 * std are "flat"
+    # flat_ratio: fraction of all steps that are flat
+    # longest_flat_ratio: longest consecutive flat run / n
+    arr_std = float(np.std(arr))
+    flat_threshold = 0.1 * arr_std if arr_std > 0 else 0.0
+    steps = np.abs(np.diff(arr))
+    is_flat = steps < flat_threshold
+    flat_ratio = round(float(np.mean(is_flat)), 4) if len(is_flat) > 0 else 0.0
+
+    max_run = 0
+    cur_run = 0
+    for f in is_flat:
+        if f:
             cur_run += 1
             max_run = max(max_run, cur_run)
         else:
-            cur_run = 1
-    flat_spots = round(max_run / n, 4)
+            cur_run = 0
+    longest_flat_ratio = round(max_run / n, 4)
 
     # Crossing points
     mean = np.mean(arr)
     crossings = int(np.sum(np.diff(np.sign(arr - mean)) != 0))
     crossing_rate = round(crossings / (n - 1), 4) if n > 1 else 0.0
 
+    # Roughness: normalised total variation (mean absolute step size)
+    roughness = round(float(np.mean(np.abs(np.diff(arr)))), 6) if n > 1 else 0.0
+
     return {
-        "lumpiness": round(lumpiness, 6),
-        "flat_spots": flat_spots,
-        "crossing_points": crossings,
-        "crossing_rate": crossing_rate,
+        "lumpiness":          round(lumpiness, 6),
+        "flat_ratio":         flat_ratio,
+        "longest_flat_ratio": longest_flat_ratio,
+        "crossing_points":    crossings,
+        "crossing_rate":      crossing_rate,
+        "roughness":          roughness,
     }
 
 
@@ -380,3 +392,152 @@ def autocorr(series: Series, lag: int = 1) -> dict:
         "lag": lag,
         "autocorrelation": round(corr, 6),
     }
+
+
+# ── Rolling Amplitude ─────────────────────────────────────────────────────────
+
+def rolling_amplitude(series: Series, window: int = 20) -> dict:
+    """
+    General-purpose amplitude measure for any series (periodic or not).
+    Computes the local range (max - min) within a sliding window, producing
+    an "instantaneous amplitude" curve, then summarises it.
+
+    Works on non-periodic series where cycle_amplitude is unreliable.
+    For periodic series, use window ≈ half the cycle period for best results.
+
+    Returns
+    -------
+    {
+        "window":           int,
+        "mean_local_range": float,  # average local swing — larger = more active amplitude
+        "cv_local_range":   float,  # std/mean of local ranges — lower = more consistent amplitude
+        "max_local_range":  float,  # peak local swing (captures bursts)
+        "min_local_range":  float,  # quietest local window
+    }
+    """
+    arr = _fill_nan(_to_array(series))
+    valid = arr[~np.isnan(arr)]
+    if len(valid) < window:
+        return {"window": window, "mean_local_range": float("nan"),
+                "cv_local_range": float("nan"), "max_local_range": float("nan"),
+                "min_local_range": float("nan")}
+
+    local_ranges = np.array([
+        float(np.max(valid[i:i + window]) - np.min(valid[i:i + window]))
+        for i in range(len(valid) - window + 1)
+    ])
+
+    mean_r = float(np.mean(local_ranges))
+    std_r  = float(np.std(local_ranges))
+    cv     = std_r / mean_r if mean_r > 0 else float("nan")
+
+    return {
+        "window":           window,
+        "mean_local_range": round(mean_r, 6),
+        "cv_local_range":   round(cv, 4),
+        "max_local_range":  round(float(np.max(local_ranges)), 6),
+        "min_local_range":  round(float(np.min(local_ranges)), 6),
+    }
+
+
+# ── Cycle Amplitude ───────────────────────────────────────────────────────────
+
+def cycle_amplitude(series: Series) -> dict:
+    """
+    Measure oscillation amplitude consistency by analysing peak-trough pairs.
+
+    Finds local maxima (peaks) and minima (troughs), then computes the
+    magnitude of each adjacent peak-trough pair.  A high-quality amplitude
+    signal has large and consistent cycle magnitudes (low coefficient of
+    variation).
+
+    Gate: returns oscillatory=False with NaN metrics if the series does not have
+    at least 2 significant peaks and 2 significant troughs (prominence > 0.3*std).
+    This prevents noise bumps or trend series from producing spurious results.
+
+    Returns
+    -------
+    {
+        "oscillatory":    bool,   # False if series lacks clear oscillation — other fields unreliable
+        "cycle_count":    int,    # number of complete peak-trough pairs found
+        "mean_amplitude": float,  # average peak-to-trough magnitude
+        "amplitude_cv":   float,  # std/mean of cycle magnitudes (lower = more consistent)
+        "amplitude_trend": str,   # "growing" | "shrinking" | "stable" (amplitude modulation)
+        "peak_count":     int,
+        "trough_count":   int,
+    }
+    """
+    from scipy.signal import find_peaks
+
+    arr = _fill_nan(_to_array(series))
+    n = len(arr)
+
+    _not_oscillatory = {
+        "oscillatory": False,
+        "cycle_count": 0, "mean_amplitude": float("nan"),
+        "amplitude_cv": float("nan"), "amplitude_trend": "unknown",
+        "peak_count": 0, "trough_count": 0,
+    }
+
+    if n < 6:
+        return _not_oscillatory
+
+    # Gate: require at least 2 significant peaks and 2 significant troughs
+    # (prominence > 0.3 * std filters out noise bumps)
+    sig_threshold = 0.3 * float(np.std(arr))
+    sig_peaks,   _ = find_peaks( arr, prominence=sig_threshold)
+    sig_troughs, _ = find_peaks(-arr, prominence=sig_threshold)
+    if len(sig_peaks) < 2 or len(sig_troughs) < 2:
+        return _not_oscillatory
+
+    # Full peak/trough detection for pairing (relaxed, no prominence filter)
+    peaks, _   = find_peaks(arr,  distance=2)
+    troughs, _ = find_peaks(-arr, distance=2)
+
+    if len(peaks) == 0 or len(troughs) == 0:
+        return {"cycle_count": 0, "mean_amplitude": float(np.max(arr) - np.min(arr)),
+                "amplitude_cv": float("nan"), "amplitude_trend": "stable",
+                "peak_count": int(len(peaks)), "trough_count": int(len(troughs))}
+
+    # Pair each peak with the nearest subsequent trough (or preceding trough)
+    magnitudes = []
+    all_extrema = sorted(
+        [(int(i), float(arr[i]), "peak") for i in peaks] +
+        [(int(i), float(arr[i]), "trough") for i in troughs],
+        key=lambda x: x[0]
+    )
+    for k in range(len(all_extrema) - 1):
+        a, b = all_extrema[k], all_extrema[k + 1]
+        if a[2] != b[2]:   # adjacent extrema of different types
+            magnitudes.append(abs(a[1] - b[1]))
+
+    if not magnitudes:
+        return {"cycle_count": 0, "mean_amplitude": float("nan"),
+                "amplitude_cv": float("nan"), "amplitude_trend": "stable",
+                "peak_count": int(len(peaks)), "trough_count": int(len(troughs))}
+
+    mean_amp = float(np.mean(magnitudes))
+    std_amp  = float(np.std(magnitudes))
+    cv       = std_amp / mean_amp if mean_amp > 0 else float("nan")
+
+    # Amplitude modulation: compare first half vs second half of magnitudes
+    half = len(magnitudes) // 2
+    if half >= 2:
+        first_half_mean  = float(np.mean(magnitudes[:half]))
+        second_half_mean = float(np.mean(magnitudes[half:]))
+        ratio = second_half_mean / first_half_mean if first_half_mean > 0 else 1.0
+        amp_trend = "growing" if ratio > 1.2 else ("shrinking" if ratio < 0.8 else "stable")
+    else:
+        amp_trend = "stable"
+
+    return {
+        "oscillatory":    True,
+        "cycle_count":    len(magnitudes),
+        "mean_amplitude": round(mean_amp, 6),
+        "amplitude_cv":   round(cv, 4),
+        "amplitude_trend": amp_trend,
+        "peak_count":     int(len(peaks)),
+        "trough_count":   int(len(troughs)),
+    }
+
+

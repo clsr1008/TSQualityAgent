@@ -19,6 +19,11 @@ Your job is to:
 1. Review all quality dimension results for series A and B.
 2. Synthesize a final comparative judgment: which series has better overall quality?
 3. Reflect critically: is the evidence sufficient and consistent?
+
+IMPORTANT for rare_pattern dimension:
+  - The winner/confidence for rare_pattern is based ONLY on Category 1 outliers (data defects).
+  - Category 2 meaningful patterns (real-world events) are informational and must NOT affect scoring.
+  - Include Category 2 patterns in your explanation for completeness, but do not penalise either series for them.
 {DIMENSION_GUIDE}
 You have three possible responses:
 
@@ -80,15 +85,31 @@ def run_adjudicator(
     recheck_count = state.get("recheck_count", 0)
     replan_count = state.get("replan_count", 0)
 
+    # Per-dimension summaries (no message chains)
     results_summary = [
-        {**{k: v for k, v in r.items() if k != "messages"},
-         "messages": [m for m in r.get("messages", []) if m.get("role") != "system"]}
+        {
+            "dimension": r.get("dimension"),
+            "winner": r.get("winner"),
+            "confidence": r.get("confidence"),
+            "evidence": r.get("evidence", {}),
+            "conclusion": r.get("conclusion", ""),
+        }
         for r in dimension_results
     ]
     results_text = json.dumps(results_summary, indent=2, cls=NumpyEncoder)
+
+    # Full ReAct chain: take the longest (in unified session, all share the same chain)
+    all_chains = [r.get("messages", []) for r in dimension_results]
+    longest_chain = max(all_chains, key=len) if all_chains else []
+    chain_messages = [m for m in longest_chain if m.get("role") != "system"]
+    chain_text = json.dumps(chain_messages, indent=2, cls=NumpyEncoder)
+
     user_content = f"""Here are the quality assessment results for all evaluated dimensions:
 
 {results_text}
+
+Full Inspector ReAct chain (shared across all dimensions):
+{chain_text}
 
 Provide your final judgment or reflection."""
 

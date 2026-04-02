@@ -396,7 +396,7 @@ def autocorr(series: Series, lag: int = 1) -> dict:
 
 # ── Rolling Amplitude ─────────────────────────────────────────────────────────
 
-def rolling_amplitude(series: Series, window: int = 20) -> dict:
+def rolling_amplitude(series: Series, window: int = None) -> dict:
     """
     General-purpose amplitude measure for any series (periodic or not).
     Computes the local range (max - min) within a sliding window, producing
@@ -404,6 +404,11 @@ def rolling_amplitude(series: Series, window: int = 20) -> dict:
 
     Works on non-periodic series where cycle_amplitude is unreliable.
     For periodic series, use window ≈ half the cycle period for best results.
+
+    Parameters
+    ----------
+    window : int | None
+        Sliding window size. If None, auto-adapts: max(10, n // 20), capped at 100.
 
     Returns
     -------
@@ -417,6 +422,8 @@ def rolling_amplitude(series: Series, window: int = 20) -> dict:
     """
     arr = _fill_nan(_to_array(series))
     valid = arr[~np.isnan(arr)]
+    if window is None:
+        window = max(10, min(len(valid) // 20, 100))
     if len(valid) < window:
         return {"window": window, "mean_local_range": float("nan"),
                 "cv_local_range": float("nan"), "max_local_range": float("nan"),

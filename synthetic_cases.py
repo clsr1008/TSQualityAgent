@@ -381,15 +381,21 @@ _ALL_CASES = [
 CASE_NAMES = [name for name, _ in _ALL_CASES]
 
 
-def get_cases(case: str = None) -> list[tuple[str, dict]]:
+def get_cases(cases=None) -> list[tuple[str, dict]]:
     """
     Return a list of (case_name, input_dict) tuples.
 
     Parameters
     ----------
-    case : one of CASE_NAMES, or None to return all cases.
+    cases : str, list[str], or None.
+            None returns all cases; a string or list filters by name(s).
     """
-    return [fn() for name, fn in _ALL_CASES if case is None or name == case]
+    if cases is None:
+        return [fn() for _, fn in _ALL_CASES]
+    if isinstance(cases, str):
+        cases = [cases]
+    selected = set(cases)
+    return [fn() for name, fn in _ALL_CASES if name in selected]
 
 
 # ── Visualisation interface ────────────────────────────────────────────────────

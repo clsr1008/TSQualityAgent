@@ -30,15 +30,16 @@ def missing_ratio(series: Series) -> dict:
     return {"missing_ratio": round(ratio, 4)}
 
 
-def noise_profile(series: Series, window: int = 5) -> dict:
+def noise_profile(series: Series, window: int = None) -> dict:
     """
     Estimate noise level using a rolling-window residual approach.
     Noise = std of (series - rolling_mean).
 
     Parameters
     ----------
-    window : int
+    window : int | None
         Rolling window size for smoothing.
+        If None, auto-adapts: max(5, n // 50), capped at 50.
 
     Returns
     -------
@@ -50,6 +51,8 @@ def noise_profile(series: Series, window: int = 5) -> dict:
     """
     arr = _to_array(series)
     valid = arr[~np.isnan(arr)]
+    if window is None:
+        window = max(5, min(len(valid) // 50, 50))
     if len(valid) < window:
         return {"noise_std": float("nan"), "signal_std": float("nan"), "noise_ratio": float("nan")}
 
@@ -74,14 +77,20 @@ def noise_profile(series: Series, window: int = 5) -> dict:
         "signal_std": round(signal_std, 6),
         "noise_ratio": round(noise_ratio, 4),
         "noise_type": noise_type,
+        "window_used": window,
     }
 
 
 
-def volatility(series: Series, window: int = 5) -> dict:
+def volatility(series: Series, window: int = None) -> dict:
     """
     Compute rolling volatility as the std of first differences within each window.
     Measures local instability / amplitude fluctuation.
+
+    Parameters
+    ----------
+    window : int | None
+        Rolling window size. If None, auto-adapts: max(5, n // 50), capped at 50.
 
     Returns
     -------
@@ -93,6 +102,8 @@ def volatility(series: Series, window: int = 5) -> dict:
     """
     arr = _to_array(series)
     valid = arr[~np.isnan(arr)]
+    if window is None:
+        window = max(5, min(len(valid) // 50, 50))
     if len(valid) < window + 1:
         return {"window": window, "mean_volatility": float("nan"), "max_volatility": float("nan")}
 
@@ -102,7 +113,7 @@ def volatility(series: Series, window: int = 5) -> dict:
         for i in range(len(diffs) - window + 1)
     ]
     return {
-        "window": window,
+        "window_used": window,
         "mean_volatility": round(float(np.mean(rolling_vol)), 6),
         "max_volatility": round(float(np.max(rolling_vol)), 6),
     }

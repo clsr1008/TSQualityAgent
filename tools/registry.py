@@ -6,7 +6,7 @@ TOOL_SCHEMAS  : OpenAI function-calling schemas for all registered tools
 """
 
 from tools.bad_quality import missing_ratio, noise_profile, volatility, range_stats
-from tools.rare_pattern import zscore_anomaly, outlier_density, mad_residual_anomaly, contextual_anomaly
+from tools.rare_pattern import zscore_outlier, outlier_density, mad_residual_outlier, contextual_rare_pattern
 from tools.pattern_structure import (
     trend_classifier,
     seasonality_detector,
@@ -23,10 +23,10 @@ TOOL_REGISTRY = {
     "noise_profile": noise_profile,
     "volatility": volatility,
     "range_stats": range_stats,
-    "zscore_anomaly": zscore_anomaly,
+    "zscore_outlier": zscore_outlier,
     "outlier_density": outlier_density,
-    "mad_residual_anomaly": mad_residual_anomaly,
-    "contextual_anomaly": contextual_anomaly,
+    "mad_residual_outlier": mad_residual_outlier,
+    "contextual_rare_pattern": contextual_rare_pattern,
     "trend_classifier": trend_classifier,
     "seasonality_detector": seasonality_detector,
     "change_point_detector": change_point_detector,
@@ -57,12 +57,12 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "noise_profile",
-            "description": "Estimate noise level using rolling-window residuals. Also classifies noise as white (random) or red (autocorrelated).",
+            "description": "Estimate noise level using rolling-window residuals. Also classifies noise as white (random) or red (autocorrelated). Window auto-adapts to series length if omitted.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "series_name": {"type": "string", "enum": ["A", "B"]},
-                    "window": {"type": "integer", "default": 5},
+                    "window": {"type": "integer", "description": "Rolling window size. Auto-adapts if omitted: max(5, n//50). Use larger window for long/smooth series, smaller for short/volatile."},
                 },
                 "required": ["series_name"],
             },
@@ -72,12 +72,12 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "volatility",
-            "description": "Rolling volatility: std of first-differences within a sliding window. Measures local instability — useful for noise_level and amplitude dimensions.",
+            "description": "Rolling volatility: std of first-differences within a sliding window. Measures local instability — useful for noise_level and amplitude dimensions. Window auto-adapts if omitted.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "series_name": {"type": "string", "enum": ["A", "B"]},
-                    "window": {"type": "integer", "default": 5},
+                    "window": {"type": "integer", "description": "Rolling window size. Auto-adapts if omitted: max(5, n//50). Use larger for long series, smaller for short."},
                 },
                 "required": ["series_name"],
             },
@@ -103,13 +103,13 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
-            "name": "zscore_anomaly",
-            "description": "Detect rare point anomalies / outliers using Z-score threshold. Used for the rare_pattern dimension.",
+            "name": "zscore_outlier",
+            "description": "Detect point outliers (Category 1 — data defects) using Z-score threshold. Flags points deviating beyond threshold standard deviations from the global mean.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "series_name": {"type": "string", "enum": ["A", "B"]},
-                    "anomaly_threshold": {"type": "number", "default": 3.0},
+                    "anomaly_threshold": {"type": "number", "default": 3.0, "description": "Z-score threshold (default 3.0). Lower (e.g. 2.5) for stricter detection if preview shows subtle spikes; higher (e.g. 4.0) if series has heavy tails."},
                 },
                 "required": ["series_name"],
             },
@@ -132,19 +132,20 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
-            "name": "mad_residual_anomaly",
+            "name": "mad_residual_outlier",
             "description": (
-                "Robust anomaly detection: detrend via rolling mean, then apply MAD-based scoring on residuals. "
-                "Fixes two Z-score weaknesses: (a) rolling mean removes local trend before scoring, "
+                "Robust outlier detection (Category 1 — data defects): detrend via rolling mean, "
+                "then apply MAD-based scoring on residuals. Fixes two Z-score weaknesses: "
+                "(a) rolling mean removes local trend before scoring, "
                 "(b) MAD is outlier-resistant unlike std. "
-                "Better than zscore_anomaly for series with trends or seasonal drift."
+                "Better than zscore_outlier for series with trends or seasonal drift."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "series_name": {"type": "string", "enum": ["A", "B"]},
-                    "window": {"type": "integer", "default": 15},
-                    "threshold": {"type": "number", "default": 3.5},
+                    "window": {"type": "integer", "description": "Rolling detrend window. Auto-adapts if omitted: max(7, n//30). Use larger for smooth/long series, smaller for short/volatile."},
+                    "threshold": {"type": "number", "default": 3.5, "description": "MAD-based cutoff (default 3.5). Lower for stricter detection."},
                 },
                 "required": ["series_name"],
             },
@@ -153,20 +154,21 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
-            "name": "contextual_anomaly",
+            "name": "contextual_rare_pattern",
             "description": (
-                "Contextual anomaly detection: for each point, fit a linear trend on the preceding "
-                "context_window points and flag points with unusually large prediction errors (MAD-normalised). "
+                "Contextual rare pattern detection (Category 2 — potentially meaningful events): "
+                "for each point, fit a linear trend on the preceding context_window points and flag "
+                "points with unusually large prediction errors (MAD-normalised). "
                 "Detects sudden breaks, V-shaped events, or step changes that look normal globally "
-                "but deviate sharply from local context. Use for rare_pattern when external context "
-                "suggests a real event may have occurred."
+                "but deviate sharply from local context. Use to identify real-world events that "
+                "should be labelled but NOT penalised in scoring."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "series_name": {"type": "string", "enum": ["A", "B"]},
-                    "context_window": {"type": "integer", "default": 10},
-                    "threshold": {"type": "number", "default": 3.0},
+                    "context_window": {"type": "integer", "description": "Local context length for trend fit. Auto-adapts if omitted: max(5, n//30). Use larger for slow-changing series, smaller for fast-changing."},
+                    "threshold": {"type": "number", "default": 3.0, "description": "MAD-normalised error cutoff (default 3.0)."},
                 },
                 "required": ["series_name"],
             },
@@ -287,7 +289,7 @@ TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {
                     "series_name": {"type": "string", "enum": ["A", "B"]},
-                    "window": {"type": "integer", "default": 20},
+                    "window": {"type": "integer", "description": "Sliding window size. Auto-adapts if omitted: max(10, n//20). For periodic series, set to ~half the dominant period for best results."},
                 },
                 "required": ["series_name"],
             },

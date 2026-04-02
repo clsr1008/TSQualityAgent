@@ -16,16 +16,23 @@ DIMENSION_GUIDE = """
   Signal noise and SNR. Higher noise or lower SNR → worse quality.
   A clean, smooth signal is preferred over a noisy, erratic one.
 
-### Rare Pattern  (context-dependent — do NOT assume rare = bad)
+### Rare Pattern  (two categories — only Category 1 affects scoring)
 - **rare_pattern**
-  Statistical outliers, point anomalies, or unusual local patterns.
-  Interpretation depends on domain context:
-    (a) Sensor / collection artifact (hardware glitch, data corruption)
-        → fewer rare patterns = better quality.
-    (b) Meaningful real-world event (financial shock, fault signal being monitored)
-        → faithfully capturing these events may indicate higher quality, not lower.
-  Always justify which interpretation applies based on the dataset description and
-  external variables. When context is ambiguous, acknowledge it explicitly.
+  Detect and classify unusual values or events into two categories:
+
+  **Category 1 — Outliers (negative quality indicator, used for scoring)**
+    Sensor glitches, data corruption, hardware artifacts, recording errors,
+    or any anomaly that does NOT correspond to a real-world event.
+    Fewer outliers = better quality. Compare A vs B on outlier count/severity.
+
+  **Category 2 — Meaningful rare patterns (informational, NOT scored)**
+    Real-world events faithfully captured by the sensor (financial shocks,
+    fault signals, environmental anomalies, etc.).
+    These are NOT quality defects. Label them per series for reporting only.
+    Do NOT penalise a series for having more meaningful rare patterns.
+    This category is context-aware: use the dataset description and external
+    variables to judge whether a detected pattern is a real-world event or noise.
+
 
 ### Pattern Structure  (structural richness — clearer, more consistent = better)
 - **trend**

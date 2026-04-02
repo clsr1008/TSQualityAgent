@@ -31,15 +31,18 @@ Inspector  Perceiver  （有次数上限）
 
 ## 质量评估维度
 
-| 类别 | 维度 | 工具 |
-|------|------|------|
-| Bad quality | missing_value | `missing_ratio` |
-| Bad quality | noise_level | `noise_profile`, `signal_to_noise_ratio` |
-| Rare pattern | anomaly | `anomaly_detection`, `outlier_density` |
-| Pattern structure | trend | `trend_classifier` |
-| Pattern structure | frequency | `seasonality_detector` |
-| Pattern structure | amplitude | `spike_detector` |
-| Pattern structure | pattern_consistency | `change_point_detector`, `pattern_consistency_indicators` |
+| 类别 | 维度 | 主要工具 | 辅助工具 |
+|------|------|---------|---------|
+| Bad quality | missing_value | `missing_ratio` | — |
+| Bad quality | noise_level | `noise_profile`, `volatility` | `range_stats` |
+| Rare pattern (Cat-1 评分) | rare_pattern | `mad_residual_outlier`, `zscore_outlier`, `outlier_density` | — |
+| Rare pattern (Cat-2 标记) | rare_pattern | `contextual_rare_pattern` | — |
+| Pattern structure | trend | `trend_classifier` | `change_point_detector`, `range_stats`, `stationarity_test` |
+| Pattern structure | frequency | `seasonality_detector` | `autocorr` |
+| Pattern structure | amplitude | `cycle_amplitude`, `rolling_amplitude` | `change_point_detector` |
+| Pattern structure | pattern_consistency | `pattern_consistency_indicators` | `stationarity_test`, `change_point_detector` |
+
+> 完整工具文档见 [TOOLS.md](TOOLS.md)（英文）/ [TOOLS_ZH.md](TOOLS_ZH.md)（中文）
 
 ## 环境安装
 
@@ -67,9 +70,23 @@ export OPENAI_API_KEY="sk-..."
 ## 运行
 
 ```bash
-# 运行内置测试用例
+# 运行全部内置测试用例
 python main.py
+
+# 运行单个 case
+python main.py --case rare_point
+
+# 运行多个 case
+python main.py --case rare_point rare_contextual
+
+# 指定模型
+python main.py --model gpt-4o --case trend frequency
+
+# 调整 Inspector 最大推理步数和反思次数
+python main.py --max_steps 8 --max_recheck 3 --max_replan 2
 ```
+
+可选 case 名称：`missing` / `noise` / `rare_point` / `rare_contextual` / `trend` / `frequency` / `amplitude` / `pattern` / `all`
 
 ## 合成测试用例可视化
 

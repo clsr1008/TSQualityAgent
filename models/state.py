@@ -16,6 +16,7 @@ class AgentState(TypedDict):
 
     # ── Perceiver output ───────────────────────────────────────────────────
     planned_dimensions: list[str]   # dimensions to assess, e.g. ["missing_value", "trend"]
+    tool_required: list[str]        # subset of planned_dimensions needing tool-based measurement
     perception_summary: str         # Perceiver's natural-language observation of A vs B
 
     # ── Inspector output ───────────────────────────────────────────────────

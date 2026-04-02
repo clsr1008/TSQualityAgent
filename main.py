@@ -22,17 +22,17 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model",
         type=str,
-        default="gpt-4o-mini",
-        help="Model name on chatanywhere (e.g. gpt-4o-mini, gpt-4o, claude-haiku-20240307)",
+        default="gpt-5.4-mini",
+        help="Model name on chatanywhere (e.g. gpt-5.4-nano-ca, gpt-4o-mini, gpt-5.4-mini, claude-haiku-4-5-20251001,gemini-3.1-pro-preview)",
     )
 
     # ── Test case selection ────────────────────────────────────────────────────
     parser.add_argument(
         "--case",
         type=str,
+        nargs="+",
         default=None,
-        choices=["all"] + CASE_NAMES,
-        help=f"Test case to run: all | {' | '.join(CASE_NAMES)} (default: all)",
+        help=f"Test case(s) to run: all | one or more of: {' '.join(CASE_NAMES)} (default: all)",
     )
 
     # ── Inspector ─────────────────────────────────────────────────────────────
@@ -62,10 +62,11 @@ if __name__ == "__main__":
     cfg = Config.from_args(args)
     llm = build_llm(cfg)
 
-    case = None if (args.case is None or args.case == "all") else args.case
-    test_cases = get_cases(case)
+    cases = None if (args.case is None or "all" in args.case) else args.case
+    test_cases = get_cases(cases)
 
-    print(f"\nModel: {args.model}  |  Case: {args.case or 'all'}  |  Cases: {len(test_cases)}")
+    case_label = " ".join(args.case) if args.case else "all"
+    print(f"\nModel: {args.model}  |  Case: {case_label}  |  Cases: {len(test_cases)}")
 
     for name, input_data in test_cases:
         print(f"\n{'=' * 60}")

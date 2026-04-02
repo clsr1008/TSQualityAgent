@@ -38,10 +38,13 @@ Valid dimension names you may select from (choose by exact name):
 You MUST respond with valid JSON in this exact format:
 {{
   "perception_summary": "<brief description of what you observed about A and B>",
-  "planned_dimensions": ["dim1", "dim2", ...]
+  "planned_dimensions": ["dim1", "dim2", ...],
+  "tool_required": ["dim1", ...]
 }}
 
-Use only the exact names listed above. Include at least 2 dimensions."""
+- planned_dimensions: all dimensions worth assessing (at least 2), ordered by relevance.
+- tool_required: subset of planned_dimensions that need tool-based measurement.
+  Omit dimensions where the difference is already clear from stats/preview (e.g. obvious missing values, clear trend difference). Those will be assessed by reasoning only."""
 
 
 def _basic_stats(series: list, head_tail: int = 5) -> dict:
@@ -166,9 +169,14 @@ Remember: output ONLY valid JSON as specified."""
             d for d in parsed.get("planned_dimensions", [])
             if d in ALL_DIMENSIONS
         ]
+        tool_required = [
+            d for d in parsed.get("tool_required", new_dimensions)
+            if d in new_dimensions
+        ]
         perception_summary = parsed.get("perception_summary", state.get("perception_summary", ""))
     except (json.JSONDecodeError, AttributeError):
         new_dimensions = ALL_DIMENSIONS if not is_replan else []
+        tool_required = new_dimensions
         perception_summary = response.content if not is_replan else state.get("perception_summary", "")
 
     messages.append({"role": "assistant", "content": response.content})
@@ -178,6 +186,10 @@ Remember: output ONLY valid JSON as specified."""
         existing_planned = state.get("planned_dimensions", [])
         merged = existing_planned + [d for d in new_dimensions if d not in existing_planned]
         planned_dimensions = merged
+        # Merge tool_required lists
+        existing_tool_req = state.get("tool_required", [])
+        merged_tool_req = existing_tool_req + [d for d in tool_required if d not in existing_tool_req]
+        tool_required = merged_tool_req
         # Keep existing dimension_results intact — Inspector will only run new dims
         dimension_results = state.get("dimension_results", [])
     else:
@@ -186,6 +198,7 @@ Remember: output ONLY valid JSON as specified."""
 
     return {
         "planned_dimensions": planned_dimensions,
+        "tool_required": tool_required,
         "perception_summary": perception_summary,
         "perceiver_messages": messages,
         "dimension_results": dimension_results,

@@ -86,9 +86,12 @@ def _render_messages(messages: list, collapse_user: bool = False) -> str:
                     f'({_e(tc["function"]["arguments"])})</div>'
                     for tc in tool_calls
                 )
+                content_html = ""
+                if content and content.strip():
+                    content_html = f'<pre class="content-assistant">{_e(content)}</pre>'
                 rows.append(
                     f'<div class="msg msg-assistant">'
-                    f'<span class="role">{_e(label)}</span>{tc_html}</div>'
+                    f'<span class="role">{_e(label)}</span>{content_html}{tc_html}</div>'
                 )
             else:
                 rows.append(
@@ -111,6 +114,115 @@ def _render_messages(messages: list, collapse_user: bool = False) -> str:
     )
 
 
+def _render_messages_with_dim_markers(messages: list) -> str:
+    """Render the full Inspector message chain with dimension dividers.
+
+    Messages containing DIMENSION_COMPLETE are labelled as 'thought'.
+    A divider is inserted AFTER the conclusion to mark the dimension boundary.
+    """
+    rows = []
+    dim_pattern = re.compile(r'DIMENSION_COMPLETE')
+
+    for m in messages:
+        role = m.get("role", "")
+        label = m.get("react_role") or role
+        content = m.get("content") or ""
+
+        has_dim_complete = role == "assistant" and dim_pattern.search(content)
+
+        # Render the message
+        if role == "system":
+            rows.append(
+                f'<div class="msg msg-system">'
+                f'<span class="role">{_e(label)}</span>'
+                f'<span class="content-sys">{_e(content)}</span></div>'
+            )
+        elif role == "user":
+            rows.append(
+                f'<div class="msg msg-user">'
+                f'<span class="role">{_e(label)}</span>'
+                f'<pre class="content-user">{_e(content)}</pre></div>'
+            )
+        elif role == "assistant":
+            tool_calls = m.get("tool_calls", [])
+
+            if has_dim_complete and tool_calls:
+                # Split: render conclusion as thought, then divider, then tool calls as action
+                # ① Conclusion
+                if content and content.strip():
+                    rows.append(
+                        f'<div class="msg msg-assistant">'
+                        f'<span class="role">thought</span>'
+                        f'<pre class="content-assistant">{_e(content)}</pre></div>'
+                    )
+                # ② Divider
+                dim_name = ""
+                dim_match = re.search(r'"dimension"\s*:\s*"([^"]+)"', content)
+                if dim_match:
+                    dim_name = dim_match.group(1)
+                divider_label = f"Dimension: {dim_name}" if dim_name else "Dimension conclusion"
+                rows.append(
+                    f'<div style="border-bottom:2px solid #4a90d9; margin:8px 0 14px; padding-bottom:6px;">'
+                    f'<b style="color:#4a90d9; font-size:0.85em;">▸ {_e(divider_label)} ✓</b></div>'
+                )
+                # ③ Tool calls for next dimension
+                tc_html = "".join(
+                    f'<div class="tool-call">▶ <b>{_e(tc["function"]["name"])}</b>'
+                    f'({_e(tc["function"]["arguments"])})</div>'
+                    for tc in tool_calls
+                )
+                rows.append(
+                    f'<div class="msg msg-assistant">'
+                    f'<span class="role">action</span>{tc_html}</div>'
+                )
+                has_dim_complete = False  # divider already inserted
+            elif tool_calls:
+                tc_html = "".join(
+                    f'<div class="tool-call">▶ <b>{_e(tc["function"]["name"])}</b>'
+                    f'({_e(tc["function"]["arguments"])})</div>'
+                    for tc in tool_calls
+                )
+                content_html = ""
+                if content and content.strip():
+                    content_html = f'<pre class="content-assistant">{_e(content)}</pre>'
+                rows.append(
+                    f'<div class="msg msg-assistant">'
+                    f'<span class="role">{_e(label)}</span>{content_html}{tc_html}</div>'
+                )
+            else:
+                cur_label = "thought" if has_dim_complete else label
+                rows.append(
+                    f'<div class="msg msg-assistant">'
+                    f'<span class="role">{_e(cur_label)}</span>'
+                    f'<pre class="content-assistant">{_e(content)}</pre></div>'
+                )
+        elif role == "tool":
+            rows.append(
+                f'<div class="msg msg-tool">'
+                f'<span class="role">{_e(label)}</span>'
+                f'<pre class="content-tool">{_e(content)}</pre></div>'
+            )
+
+        # Insert dimension divider AFTER pure text conclusions (no tool_calls in same message)
+        if has_dim_complete:
+            dim_name = ""
+            dim_match = re.search(r'"dimension"\s*:\s*"([^"]+)"', content)
+            if dim_match:
+                dim_name = dim_match.group(1)
+            divider_label = f"Dimension: {dim_name}" if dim_name else "Dimension conclusion"
+            rows.append(
+                f'<div style="border-bottom:2px solid #4a90d9; margin:8px 0 14px; padding-bottom:6px;">'
+                f'<b style="color:#4a90d9; font-size:0.85em;">▸ {_e(divider_label)} ✓</b></div>'
+            )
+
+    inner = "\n".join(rows)
+    return (
+        f'<details><summary class="msg-toggle">'
+        f'<b>ReAct chain</b> ({len(messages)} messages)</summary>'
+        f'<div class="msg-list">{inner}</div></details>'
+    )
+
+
 def _winner_badge(winner: str, confidence: float) -> str:
     color = {"A": "#1a6fa8", "B": "#c0392b", "tie": "#7f8c8d"}.get(winner.upper(), "#555")
     return (
@@ -125,39 +237,59 @@ def _render_record(record: dict) -> str:
 
     # ── Perceiver ─────────────────────────────────────────────────────────────
     perceiver = record.get("perceiver", {})
-    dims = ", ".join(perceiver.get("planned_dimensions", [])) or "—"
+    planned = perceiver.get("planned_dimensions", [])
+    tool_req = set(perceiver.get("tool_required", planned))
+    dim_badges = []
+    for d in planned:
+        if d in tool_req:
+            dim_badges.append(f'<code>{_e(d)}</code><span class="dim-tag dim-tag-tool">tool</span>')
+        else:
+            dim_badges.append(f'<code>{_e(d)}</code><span class="dim-tag dim-tag-reason">reasoning</span>')
+    dims_html = " &nbsp; ".join(dim_badges) or "—"
     parts.append(f"""
 <section>
   <h2>① Perceiver</h2>
-  <p><b>Planned dimensions:</b> <code>{_e(dims)}</code></p>
+  <p><b>Planned dimensions:</b> {dims_html}</p>
   <p><b>Perception summary:</b> {_e(perceiver.get("perception_summary", ""))}</p>
   {_render_messages(perceiver.get("messages", []))}
 </section>""")
 
     # ── Inspector (per dimension) ─────────────────────────────────────────────
     inspector_items = record.get("inspector", [])
+
+    # Dimension summary cards (no message chain per card)
     dim_cards = []
     for r in inspector_items:
         evidence_json = _compact_arrays(
             json.dumps(r.get("evidence", {}), indent=2, cls=NumpyEncoder, ensure_ascii=False)
         )
+        dim_name = r["dimension"]
+        if dim_name in tool_req:
+            mode_tag = '<span class="dim-tag dim-tag-tool">tool</span>'
+        else:
+            mode_tag = '<span class="dim-tag dim-tag-reason">reasoning</span>'
         dim_cards.append(f"""
   <div class="dim-card">
     <div class="dim-header">
-      <b>{_e(r["dimension"])}</b>
+      <b>{_e(dim_name)}</b> {mode_tag}
       &nbsp; {_winner_badge(r.get("winner","tie"), r.get("confidence", 0))}
     </div>
     <p class="conclusion">{_e(r.get("conclusion",""))}</p>
     <details><summary class="evidence-toggle">Evidence</summary>
       <pre class="evidence">{_e(evidence_json)}</pre>
     </details>
-    {_render_messages(r.get("messages", []))}
   </div>""")
+
+    # Render one unified ReAct chain (take the longest message list)
+    all_msg_lists = [r.get("messages", []) for r in inspector_items]
+    longest_chain = max(all_msg_lists, key=len) if all_msg_lists else []
+    chain_html = _render_messages_with_dim_markers(longest_chain) if longest_chain else ""
 
     parts.append(f"""
 <section>
   <h2>② Inspector</h2>
   {"".join(dim_cards)}
+  {chain_html}
 </section>""")
 
     # ── Adjudicator ───────────────────────────────────────────────────────────
@@ -203,6 +335,10 @@ img     { width: 100%; border: 1px solid #ddd; border-radius: 6px; margin-bottom
               padding: 12px 16px; margin-bottom: 10px; background: #fafafa; }
 .dim-header { font-size: 1em; margin-bottom: 6px; }
 .conclusion { margin: 4px 0 8px; color: #333; }
+.dim-tag    { display: inline-block; font-size: 0.72em; font-weight: 600;
+              padding: 1px 7px; border-radius: 8px; vertical-align: middle; margin-left: 4px; }
+.dim-tag-tool   { background: #e8f0fe; color: #1a56c7; }
+.dim-tag-reason { background: #e8f5e9; color: #2e7d32; }
 
 /* evidence */
 .evidence-toggle { cursor: pointer; font-size: 0.82em; color: #888; user-select: none; }
@@ -304,6 +440,7 @@ def save_run(
         "perceiver": {
             "perception_summary": state.get("perception_summary", ""),
             "planned_dimensions": state.get("planned_dimensions", []),
+            "tool_required": state.get("tool_required", []),
             "messages": state.get("perceiver_messages", []),
         },
         "inspector": [

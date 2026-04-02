@@ -1,9 +1,9 @@
 """
 Rare-pattern detection tools:
-  - zscore_anomaly
+  - zscore_outlier
   - outlier_density
-  - mad_residual_anomaly
-  - contextual_anomaly
+  - mad_residual_outlier
+  - contextual_rare_pattern
 """
 import numpy as np
 from typing import Union
@@ -15,7 +15,7 @@ def _to_array(series: Series) -> np.ndarray:
     return np.array(series, dtype=float)
 
 
-def zscore_anomaly(series: Series, anomaly_threshold: float = 3.0) -> dict:
+def zscore_outlier(series: Series, anomaly_threshold: float = 3.0) -> dict:
     """
     Detect point anomalies using Z-score thresholding.
 
@@ -112,7 +112,7 @@ def outlier_density(series: Series) -> dict:
     }
 
 
-def mad_residual_anomaly(series: Series, window: int = 15, threshold: float = 3.5) -> dict:
+def mad_residual_outlier(series: Series, window: int = None, threshold: float = 3.5) -> dict:
     """
     Robust anomaly detection: detrend via rolling mean, then apply MAD-based scoring
     on residuals. Addresses two Z-score limitations:
@@ -121,7 +121,8 @@ def mad_residual_anomaly(series: Series, window: int = 15, threshold: float = 3.
 
     Parameters
     ----------
-    window    : rolling window size for detrending (default 15)
+    window    : rolling window size for detrending.
+                If None, auto-adapts: max(7, n // 30), capped at 50.
     threshold : modified Z-score cutoff (default 3.5; Iglewicz & Hoaglin recommend 3.5)
 
     Returns
@@ -133,12 +134,16 @@ def mad_residual_anomaly(series: Series, window: int = 15, threshold: float = 3.
         "anomaly_values": list[float],
         "mad": float,               # MAD of residuals — measures typical residual spread
         "threshold_used": float,
+        "window_used": int,
     }
     """
     arr = _to_array(series)
     valid_mask = ~np.isnan(arr)
     valid = arr[valid_mask]
     valid_indices = np.where(valid_mask)[0]
+
+    if window is None:
+        window = max(7, min(len(valid) // 30, 50))
 
     if len(valid) < window + 3:
         return {"anomaly_count": 0, "anomaly_ratio": 0.0,
@@ -170,10 +175,11 @@ def mad_residual_anomaly(series: Series, window: int = 15, threshold: float = 3.
         "anomaly_values": values,
         "mad": round(mad, 6),
         "threshold_used": threshold,
+        "window_used": window,
     }
 
 
-def contextual_anomaly(series: Series, context_window: int = 10, threshold: float = 3.0) -> dict:
+def contextual_rare_pattern(series: Series, context_window: int = None, threshold: float = 3.0) -> dict:
     """
     Contextual anomaly detection: for each point, fit a linear trend on the preceding
     context_window points and compute the prediction error. Points with unusually large
@@ -184,7 +190,8 @@ def contextual_anomaly(series: Series, context_window: int = 10, threshold: floa
 
     Parameters
     ----------
-    context_window : number of preceding points used to build local expectation (default 10)
+    context_window : number of preceding points used to build local expectation.
+                     If None, auto-adapts: max(5, n // 30), capped at 50.
     threshold      : MAD-normalised error cutoff (default 3.0)
 
     Returns
@@ -195,12 +202,16 @@ def contextual_anomaly(series: Series, context_window: int = 10, threshold: floa
         "anomaly_indices": list[int],
         "anomaly_values": list[float],
         "threshold_used": float,
+        "context_window_used": int,
     }
     """
     arr = _to_array(series)
     valid_mask = ~np.isnan(arr)
     valid = arr[valid_mask]
     valid_indices = np.where(valid_mask)[0]
+
+    if context_window is None:
+        context_window = max(5, min(len(valid) // 30, 50))
 
     if len(valid) < context_window + 3:
         return {"anomaly_count": 0, "anomaly_ratio": 0.0,
@@ -238,4 +249,5 @@ def contextual_anomaly(series: Series, context_window: int = 10, threshold: floa
         "anomaly_indices": indices,
         "anomaly_values": values,
         "threshold_used": threshold,
+        "context_window_used": context_window,
     }

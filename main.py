@@ -4,6 +4,7 @@ TSqualityAgent – entry point
 import argparse
 from dataclasses import asdict
 from config import Config, build_llm
+from models.llm import CHATANYWHERE_BASE_URL
 from workflow import run_pipeline
 from synthetic_cases import get_cases, CASE_NAMES
 from run_logger import save_run
@@ -23,7 +24,25 @@ if __name__ == "__main__":
         "--model",
         type=str,
         default="gpt-5.4-mini",
-        help="Model name on chatanywhere (e.g. gpt-5.4-nano-ca, gpt-4o-mini, gpt-5.4-mini, claude-haiku-4-5-20251001,gemini-3.1-pro-preview)",
+        help="Model name, e.g. gpt-5.4-mini (cloud) or Qwen/Qwen3-4B (local vLLM)",
+    )
+    parser.add_argument(
+        "--base_url",
+        type=str,
+        default=CHATANYWHERE_BASE_URL,
+        help="OpenAI-compatible API base URL. Use http://localhost:8000/v1 for local vLLM.",
+    )
+    parser.add_argument(
+        "--api_key",
+        type=str,
+        default="",
+        help="API key. Leave empty to use OPENAI_API_KEY env var. Use 'EMPTY' for local vLLM.",
+    )
+    parser.add_argument(
+        "--enable_thinking",
+        action="store_true",
+        default=False,
+        help="Enable Qwen3 thinking mode (disabled by default for speed).",
     )
 
     # ── Test case selection ────────────────────────────────────────────────────
@@ -66,7 +85,7 @@ if __name__ == "__main__":
     test_cases = get_cases(cases)
 
     case_label = " ".join(args.case) if args.case else "all"
-    print(f"\nModel: {args.model}  |  Case: {case_label}  |  Cases: {len(test_cases)}")
+    print(f"\nModel: {args.model}  |  Base URL: {args.base_url}  |  Case: {case_label}  |  Cases: {len(test_cases)}")
 
     for name, input_data in test_cases:
         print(f"\n{'=' * 60}")

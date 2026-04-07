@@ -2,10 +2,10 @@
 CLI entry point for generating Perceiver training datasets.
 
 Usage:
-    python -m training.build_dataset --n_samples 5000 --output training/data/train.jsonl
-    python -m training.build_dataset --n_samples 500 --seed_offset 1000000 --output training/data/val.jsonl
-    python -m training.build_dataset --n_samples 1000 --output training/data/check.jsonl --stats
-    python -m training.build_dataset --n_samples 10 --output training/data/test.jsonl --visualize
+    python -m training.synthesis.build_dataset --n_samples 5000 --output training/data/train.jsonl
+    python -m training.synthesis.build_dataset --n_samples 500 --seed_offset 1000000 --output training/data/val.jsonl
+    python -m training.synthesis.build_dataset --n_samples 1000 --output training/data/check.jsonl --stats
+    python -m training.synthesis.build_dataset --n_samples 10 --output training/data/test.jsonl --visualize
 """
 import argparse
 import json
@@ -17,8 +17,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import numpy as np
 
-from training.sample_generator import generate_sample
-from training.visualize import render_dataset_html
+from training.synthesis.sample_generator import generate_sample
+from training.synthesis.visualize import render_dataset_html
 
 
 class _NumpyEncoder(json.JSONEncoder):

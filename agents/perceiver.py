@@ -47,7 +47,7 @@ You MUST respond with valid JSON in this exact format:
   Omit dimensions where the difference is already clear from stats/preview (e.g. obvious missing values, clear trend difference). Those will be assessed by reasoning only."""
 
 
-def _basic_stats(series: list, head_tail: int = 5) -> dict:
+def _basic_stats(series: list) -> dict:
     arr = np.array(series, dtype=float)
     valid = arr[~np.isnan(arr)]
     n = len(arr)
@@ -61,6 +61,7 @@ def _basic_stats(series: list, head_tail: int = 5) -> dict:
 
     return {
         "length": n,
+        "missing_ratio": round(1 - len(valid) / n, 4) if n > 0 else None,
         "mean": round(float(np.mean(valid)), 4) if len(valid) else None,
         "std": round(float(np.std(valid)), 4) if len(valid) else None,
         "min": round(float(np.min(valid)), 4) if len(valid) else None,
@@ -68,8 +69,6 @@ def _basic_stats(series: list, head_tail: int = 5) -> dict:
         "p25": round(float(np.percentile(valid, 25)), 4) if len(valid) else None,
         "p75": round(float(np.percentile(valid, 75)), 4) if len(valid) else None,
         "slope": round(slope, 6) if slope is not None else None,
-        "head": [round(v, 4) for v in arr[:head_tail].tolist()],
-        "tail": [round(v, 4) for v in arr[-head_tail:].tolist()],
     }
 
 

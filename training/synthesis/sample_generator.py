@@ -7,16 +7,16 @@ Generates (input, label) pairs where:
 """
 import numpy as np
 
-from training.base_generator import generate_random_base
-from training.defect_injector import inject_defect, ALL_DIMENSIONS
-from training.label_schema import (
+from training.synthesis.base_generator import generate_random_base
+from training.synthesis.defect_injector import inject_defect, ALL_DIMENSIONS
+from training.synthesis.label_schema import (
     SEVERITIES, N_DIM_WEIGHTS, needs_tool,
 )
 
 
 # ── Input feature helpers (mirrored from agents/perceiver.py) ────────────────
 
-def _basic_stats(series: list, head_tail: int = 5) -> dict:
+def _basic_stats(series: list) -> dict:
     """Compute basic statistics — same as Perceiver sees at inference."""
     arr = np.array(series, dtype=float)
     valid = arr[~np.isnan(arr)]
@@ -29,6 +29,7 @@ def _basic_stats(series: list, head_tail: int = 5) -> dict:
 
     return {
         "length": len(arr),
+        "missing_ratio": round(1 - len(valid) / len(arr), 4) if len(arr) > 0 else None,
         "mean": round(float(np.mean(valid)), 4) if len(valid) else None,
         "std": round(float(np.std(valid)), 4) if len(valid) else None,
         "min": round(float(np.min(valid)), 4) if len(valid) else None,
@@ -36,8 +37,6 @@ def _basic_stats(series: list, head_tail: int = 5) -> dict:
         "p25": round(float(np.percentile(valid, 25)), 4) if len(valid) else None,
         "p75": round(float(np.percentile(valid, 75)), 4) if len(valid) else None,
         "slope": round(slope, 6) if slope is not None else None,
-        "head": [round(v, 4) for v in arr[:head_tail].tolist()],
-        "tail": [round(v, 4) for v in arr[-head_tail:].tolist()],
     }
 
 

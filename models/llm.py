@@ -1,14 +1,17 @@
 """
-LLM interface — unified via chatanywhere third-party OpenAI-compatible API.
-All models (GPT / Claude / Gemini) are called through the same endpoint.
+LLM interface — supports any OpenAI-compatible API endpoint.
+
+Default backend: chatanywhere (cloud, closed-source models).
+Local backend:   vLLM serving Qwen/Qwen3-4B (or any other model) at localhost:8000.
 """
 import json
 import os
+import re
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
-BASE_URL = "https://api.chatanywhere.tech/v1"
+CHATANYWHERE_BASE_URL = "https://api.chatanywhere.tech/v1"
 
 
 @dataclass
@@ -36,32 +39,49 @@ class BaseLLM(ABC):
         return self.chat(messages)
 
 
-# ── Chatanywhere unified backend ──────────────────────────────────────────────
+# ── OpenAI-compatible backend (cloud or local vLLM) ───────────────────────────
 
-class ChatanywhereLLM(BaseLLM):
+class OpenAICompatibleLLM(BaseLLM):
     """
-    Supports any model available on chatanywhere:
-      gpt-4o-mini, gpt-4o, claude-haiku-20240307, gemini-2.5-flash, ...
+    Works with any OpenAI-compatible endpoint:
+      - Cloud (chatanywhere): base_url=CHATANYWHERE_BASE_URL, api_key from OPENAI_API_KEY
+      - Local vLLM:           base_url="http://localhost:8000/v1", api_key="EMPTY"
 
-    API key is read from the OPENAI_API_KEY environment variable.
+    Qwen3 thinking-mode output (<think>...</think>) is automatically stripped
+    from response.content so all agents always receive clean text.
     """
 
-    def __init__(self, model: str = "gpt-4o-mini", retries: int = 3, **kwargs):
+    def __init__(
+        self,
+        model: str = "gpt-4o-mini",
+        base_url: str = CHATANYWHERE_BASE_URL,
+        api_key: str = "",
+        retries: int = 3,
+        enable_thinking: bool = False,
+        **kwargs,
+    ):
         try:
             from openai import OpenAI
         except ImportError:
             raise ImportError("openai package is required: pip install openai")
 
-        self.client = OpenAI(
-            api_key=os.environ["OPENAI_API_KEY"],
-            base_url=BASE_URL,
-        )
+        resolved_key = api_key or os.environ.get("OPENAI_API_KEY", "EMPTY")
+        self.client = OpenAI(api_key=resolved_key, base_url=base_url)
         self.model = model
         self.retries = retries
+        self.enable_thinking = enable_thinking
         self.kwargs = kwargs
+
+    @staticmethod
+    def _strip_thinking(content: str) -> str:
+        """Remove <think>...</think> blocks produced by Qwen3 thinking mode."""
+        return re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
 
     def _create(self, **kwargs) -> object:
         """Call completions.create with retry logic."""
+        if not self.enable_thinking:
+            extra = kwargs.setdefault("extra_body", {})
+            extra.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
         retry_count = 0
         while True:
             try:
@@ -85,7 +105,8 @@ class ChatanywhereLLM(BaseLLM):
             messages=messages,
             **self.kwargs,
         )
-        return LLMResponse(content=resp.choices[0].message.content or "")
+        content = self._strip_thinking(resp.choices[0].message.content or "")
+        return LLMResponse(content=content)
 
     def chat_with_tools(self, messages: list[dict], tools: list[dict]) -> LLMResponse:
         resp = self._create(
@@ -105,4 +126,9 @@ class ChatanywhereLLM(BaseLLM):
                         arguments=json.loads(tc.function.arguments),
                     )
                 )
-        return LLMResponse(content=msg.content or "", tool_calls=tool_calls)
+        content = self._strip_thinking(msg.content or "")
+        return LLMResponse(content=content, tool_calls=tool_calls)
+
+
+# Backward-compatible alias
+ChatanywhereLLM = OpenAICompatibleLLM

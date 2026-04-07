@@ -92,17 +92,17 @@ def case_missing(n: int = 150, seed: int = 1) -> tuple:
 def case_noise(n: int = 150, seed: int = 11) -> tuple:
     """
     A and B come from the same underlying source (sinusoidal + gentle trend).
-    B has significantly elevated noise but no missing values.
+    A has significantly elevated noise but no missing values.
     The degradation is purely in measurement precision, not in completeness.
     """
     base = _sine(n, period=30, amplitude=2.0) + _trend(n, 0, 1.5) + _noise(n, std=0.2, seed=seed)
 
-    series_a = base.copy()
-    # B: same base but noise std roughly doubled
-    series_b = base + _noise(n, std=0.55, seed=seed + 10)
+    series_b = base.copy()
+    # A: same base but noise std roughly doubled
+    series_a = base + _noise(n, std=0.55, seed=seed + 10)
 
     return (
-        "bad_quality | noise — B has elevated noise, no missing values",
+        "bad_quality | noise — A has elevated noise, no missing values",
         {
             "dataset_description": (
                 "Temperature readings from two co-located sensors over the same period. "
@@ -134,10 +134,10 @@ def case_rare_point(n: int = 150, seed: int = 2) -> tuple:
     signs = rng.choice([-1, 1], size=4)
     magnitudes = rng.uniform(5.0, 6.5, size=4)   # ~5–6σ
     for i, s, m in zip(spike_idx, signs, magnitudes):
-        series_b[i] += s * m
+        series_a[i] += s * m
 
     return (
-        "rare_pattern | point anomaly — B has sensor-fault spikes",
+        "rare_pattern | point anomaly — A has sensor-fault spikes",
         {
             "dataset_description": (
                 "Vibration sensor readings from two identical pumps running in parallel "
@@ -147,7 +147,7 @@ def case_rare_point(n: int = 150, seed: int = 2) -> tuple:
             "series_B": _to_list(series_b),
             "external_variables": {
                 "operational_events": "none",
-                "sensor_flag": "Pump B sensor: calibration warning issued",
+                "sensor_flag": "Pump A sensor: calibration warning issued",
             },
         },
     )
@@ -311,14 +311,14 @@ def case_amplitude(n: int = 150, seed: int = 6) -> tuple:
     series_b += _noise(n, std=0.15, seed=seed + 1)
 
     return (
-        "pattern_structure | amplitude — A has consistent peaks/troughs, B varies widely per cycle",
+        "pattern_structure | amplitude — B has consistent peaks/troughs, A varies widely per cycle",
         {
             "dataset_description": (
                 "Pressure readings (bar) from two hydraulic pistons executing identical "
                 "reciprocating cycles (period ≈ 20 steps)."
             ),
-            "series_A": _to_list(series_a),
-            "series_B": _to_list(series_b),
+            "series_A": _to_list(series_b),
+            "series_B": _to_list(series_a),
             "external_variables": {},
         },
     )
@@ -348,18 +348,18 @@ def case_pattern(n: int = 150, seed: int = 7) -> tuple:
         series_b[i] = 0.7 * series_b[i - 1] + rng.normal(0.6, local_std)
 
     return (
-        "pattern_structure | pattern — B has alternating variance (lumpier)",
+        "pattern_structure | pattern — A has alternating variance (lumpier)",
         {
             "dataset_description": (
                 "Air quality index (PM2.5, normalised) measured at two monitoring stations "
                 "in the same city district. Both stations record the same baseline air quality "
                 "with a stable long-run mean."
             ),
-            "series_A": _to_list(series_a),
-            "series_B": _to_list(series_b),
+            "series_A": _to_list(series_b),
+            "series_B": _to_list(series_a),
             "external_variables": {
-                "station_A_location": "park (away from traffic)",
-                "station_B_location": "roadside intersection",
+                "station_A_location": "roadside intersection",
+                "station_B_location": "park (away from traffic)",
             },
         },
     )

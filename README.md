@@ -54,23 +54,44 @@ pip install -r requirements.txt
 
 ## 配置 LLM
 
-通过 [chatanywhere](https://api.chatanywhere.tech) 统一调用多种模型，在 `config.py` 中指定模型名：
+支持两种后端，通过 `--base_url` 切换，接口完全兼容。
 
-```python
-# 可选模型：gpt-4o-mini / gpt-4o / claude-haiku-20240307 / gemini-2.5-flash 等
-cfg = Config(model="gpt-4o-mini")
-```
+### 云端模式（默认）
 
-设置 API Key 环境变量：
+通过 [chatanywhere](https://api.chatanywhere.tech) 调用闭源模型：
 
 ```bash
 export OPENAI_API_KEY="sk-..."
+python main.py --model gpt-4o-mini
+# 可选：gpt-4o / claude-haiku-20240307 / gemini-2.5-flash 等
+```
+
+### 本地模式（vLLM + Qwen3-4B）
+
+启动 vLLM 服务（需 `vllm>=0.8.5`，首次运行自动从 HuggingFace 下载模型）：
+
+```bash
+CUDA_VISIBLE_DEVICES=2 vllm serve Qwen/Qwen3-4B \
+    --port 8000 \
+    --tensor-parallel-size 1 \
+    --enable-auto-tool-choice \
+    --tool-call-parser hermes \
+    --max-model-len 32768
+```
+
+然后运行 agent：
+
+```bash
+python main.py \
+    --model Qwen/Qwen3-4B \
+    --base_url http://localhost:8000/v1 \
+    --api_key EMPTY
 ```
 
 ## 运行
 
 ```bash
-# 运行全部内置测试用例
+# 运行全部内置测试用例（云端模式）
 python main.py
 
 # 运行单个 case
@@ -79,8 +100,11 @@ python main.py --case rare_point
 # 运行多个 case
 python main.py --case rare_point rare_contextual
 
-# 指定模型
+# 指定云端模型
 python main.py --model gpt-4o --case trend frequency
+
+# 使用本地 Qwen3-4B
+python main.py --model Qwen/Qwen3-4B --base_url http://localhost:8000/v1 --api_key EMPTY
 
 # 调整 Inspector 最大推理步数和反思次数
 python main.py --max_steps 8 --max_recheck 3 --max_replan 2
@@ -110,7 +134,14 @@ python synthetic_cases.py --out my_plots
 from config import Config, build_llm
 from workflow import run_pipeline
 
-cfg = Config(model="gpt-4o-mini", max_steps_per_dimension=6, max_recheck=2, max_replan=1)
+# 云端
+cfg = Config(model="gpt-4o-mini", base_url="https://api.chatanywhere.tech/v1",
+             api_key="", max_steps_per_dimension=6, max_recheck=2, max_replan=1)
+
+# 本地 vLLM
+# cfg = Config(model="Qwen/Qwen3-4B", base_url="http://localhost:8000/v1",
+#              api_key="EMPTY", max_steps_per_dimension=6, max_recheck=2, max_replan=1)
+
 llm = build_llm(cfg)
 
 result = run_pipeline(

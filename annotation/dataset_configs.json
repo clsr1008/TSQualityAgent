@@ -1,0 +1,117 @@
+[
+  {
+    "dataset": "datasets/BME/blocks.jsonl",
+    "output": "datasets/BME/annotation.jsonl",
+    "description": "BME biomedical time series"
+  },
+  {
+    "dataset": "datasets/CBF/blocks.jsonl",
+    "output": "datasets/CBF/annotation.jsonl",
+    "description": "Cylinder-Bell-Funnel synthetic time series"
+  },
+  {
+    "dataset": "datasets/Handwriting/blocks.jsonl",
+    "output": "datasets/Handwriting/annotation.jsonl",
+    "description": "Handwriting motion capture time series"
+  },
+  {
+    "dataset": "datasets/MedicalImages/blocks.jsonl",
+    "output": "datasets/MedicalImages/annotation.jsonl",
+    "description": "Medical imaging derived time series"
+  },
+  {
+    "dataset": "datasets/electricity/blocks.jsonl",
+    "output": "datasets/electricity/annotation.jsonl",
+    "description": "Household electricity consumption time series"
+  },
+  {
+    "dataset": "datasets/electricity_15min/blocks.jsonl",
+    "output": "datasets/electricity_15min/annotation.jsonl",
+    "description": "Electricity load 15-minute interval time series"
+  },
+  {
+    "dataset": "datasets/electricity_weekly/blocks.jsonl",
+    "output": "datasets/electricity_weekly/annotation.jsonl",
+    "description": "Electricity load weekly aggregated time series"
+  },
+  {
+    "dataset": "datasets/energy/blocks.jsonl",
+    "output": "datasets/energy/annotation.jsonl",
+    "description": "Building energy consumption time series"
+  },
+  {
+    "dataset": "datasets/exchange_rate/blocks.jsonl",
+    "output": "datasets/exchange_rate/annotation.jsonl",
+    "description": "Foreign exchange rate time series"
+  },
+  {
+    "dataset": "datasets/fiannce/blocks.jsonl",
+    "output": "datasets/fiannce/annotation.jsonl",
+    "description": "Financial market time series"
+  },
+  {
+    "dataset": "datasets/healthcare/blocks.jsonl",
+    "output": "datasets/healthcare/annotation.jsonl",
+    "description": "Healthcare clinical time series"
+  },
+  {
+    "dataset": "datasets/m4_daily/blocks.jsonl",
+    "output": "datasets/m4_daily/annotation.jsonl",
+    "description": "M4 competition daily time series"
+  },
+  {
+    "dataset": "datasets/m4_monthly/blocks.jsonl",
+    "output": "datasets/m4_monthly/annotation.jsonl",
+    "description": "M4 competition monthly time series"
+  },
+  {
+    "dataset": "datasets/m4_yearly/blocks.jsonl",
+    "output": "datasets/m4_yearly/annotation.jsonl",
+    "description": "M4 competition yearly time series"
+  },
+  {
+    "dataset": "datasets/m5/blocks.jsonl",
+    "output": "datasets/m5/annotation.jsonl",
+    "description": "M5 competition retail sales time series"
+  },
+  {
+    "dataset": "datasets/monash_m3_monthly/blocks.jsonl",
+    "output": "datasets/monash_m3_monthly/annotation.jsonl",
+    "description": "Monash M3 monthly forecasting time series"
+  },
+  {
+    "dataset": "datasets/monash_traffic/blocks.jsonl",
+    "output": "datasets/monash_traffic/annotation.jsonl",
+    "description": "Monash traffic volume time series"
+  },
+  {
+    "dataset": "datasets/other/blocks.jsonl",
+    "output": "datasets/other/annotation.jsonl",
+    "description": "Miscellaneous real-world time series"
+  },
+  {
+    "dataset": "datasets/synthetic/blocks.jsonl",
+    "output": "datasets/synthetic/annotation.jsonl",
+    "description": "Synthetically generated time series"
+  },
+  {
+    "dataset": "datasets/traffic/blocks.jsonl",
+    "output": "datasets/traffic/annotation.jsonl",
+    "description": "Road traffic volume time series"
+  },
+  {
+    "dataset": "datasets/weather/blocks.jsonl",
+    "output": "datasets/weather/annotation.jsonl",
+    "description": "Meteorological weather time series"
+  },
+  {
+    "dataset": "datasets/weatherbench_daily/blocks.jsonl",
+    "output": "datasets/weatherbench_daily/annotation.jsonl",
+    "description": "WeatherBench daily weather reanalysis time series"
+  },
+  {
+    "dataset": "datasets/wiki_daily_100k/blocks.jsonl",
+    "output": "datasets/wiki_daily_100k/annotation.jsonl",
+    "description": "Wikipedia page view daily time series"
+  }
+]

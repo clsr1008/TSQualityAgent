@@ -16,14 +16,16 @@ from agents.adjudicator import run_adjudicator
 from config import Config
 
 
-def build_workflow(llm: BaseLLM, config: Config = None) -> StateGraph:
+def build_workflow(llm: BaseLLM, config: Config = None,
+                   perceiver_llm: BaseLLM = None) -> StateGraph:
     if config is None:
         config = Config()
+    _perceiver_llm = perceiver_llm or llm
 
     # ── Node functions (partial application of llm + config) ──────────────────
 
     def perceiver_node(state: AgentState) -> dict:
-        return run_perceiver(state, llm)
+        return run_perceiver(state, _perceiver_llm)
 
     def inspector_node(state: AgentState) -> dict:
         return run_inspector(state, llm, max_steps=config.max_steps_per_dimension)
@@ -70,7 +72,8 @@ def build_workflow(llm: BaseLLM, config: Config = None) -> StateGraph:
     return graph.compile()
 
 
-def run_pipeline(input_data: dict, llm: BaseLLM, config: Config = None) -> dict:
+def run_pipeline(input_data: dict, llm: BaseLLM, config: Config = None,
+                 perceiver_llm: BaseLLM = None) -> dict:
     """
     Convenience function: build the workflow and run it end-to-end.
 
@@ -89,7 +92,7 @@ def run_pipeline(input_data: dict, llm: BaseLLM, config: Config = None) -> dict:
     -------
     final_result : dict  { winner, confidence, explanation }
     """
-    app = build_workflow(llm, config)
+    app = build_workflow(llm, config, perceiver_llm=perceiver_llm)
 
     initial_state: AgentState = {
         "input": input_data,

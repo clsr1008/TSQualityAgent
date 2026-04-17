@@ -8,7 +8,7 @@ Generates (input, label) pairs where:
 import numpy as np
 
 from training.synthesis.base_generator import generate_random_base
-from training.synthesis.defect_injector import inject_defect, ALL_DIMENSIONS
+from training.synthesis.defect_injector import inject_defect, ALL_DIMENSIONS, DEFECT_VARIANTS
 from training.synthesis.label_schema import (
     SEVERITIES, N_DIM_WEIGHTS, needs_tool,
 )
@@ -73,6 +73,7 @@ def generate_sample(
     seed: int,
     n_min: int = 100,
     n_max: int = 150,
+    heavy_prob: float = 0.8,
 ) -> dict:
     """
     Generate a single Perceiver training sample.
@@ -80,13 +81,17 @@ def generate_sample(
     Series length is sampled uniformly from [n_min, n_max] so both A and B
     share the same randomly chosen length within each sample.
 
+    heavy_prob: prior probability of choosing heavy severity before only_severity
+                flip. Increase (e.g. 0.65) to reduce tool_required rate in the
+                training set, countering the model's over-calling tendency.
+
     Returns a dict with keys: sample_id, input, labels, meta.
     """
     rng = np.random.default_rng(seed)
     n = int(rng.integers(n_min, n_max + 1))
 
     # 1. Generate base series
-    base, attr_pool, desc = generate_random_base(n=n, seed=seed)
+    base, attr_pool, _ = generate_random_base(n=n, seed=seed)
 
     # 2. Sample number of dimensions to inject
     n_dims_options = list(N_DIM_WEIGHTS.keys())
@@ -106,7 +111,12 @@ def generate_sample(
     tool_required = []
 
     for j, dim in enumerate(chosen_dims):
-        severity = str(rng.choice(SEVERITIES))
+        severity = str(rng.choice(SEVERITIES, p=[1 - heavy_prob, heavy_prob]))
+        # If no variant supports this severity (e.g. all methods are only_severity="light"),
+        # flip to the other severity so inject_defect never hits a missing params key.
+        dim_variants = DEFECT_VARIANTS[dim]
+        if not any(v.get("only_severity", severity) == severity for v in dim_variants):
+            severity = "heavy" if severity == "light" else "light"
         side = str(rng.choice(["A", "B"]))
 
         if side == "B":
@@ -153,7 +163,7 @@ def generate_sample(
     return {
         "sample_id": sample_id,
         "input": {
-            "dataset_description": desc,
+            "dataset_description": "",
             "preview_A": preview_A,
             "preview_B": preview_B,
             "stats_A": stats_A,
@@ -168,16 +178,3 @@ def generate_sample(
             "base_attributes": attr_pool,
         },
     }
-
-
-def generate_batch(
-    n_samples: int,
-    seed_offset: int = 0,
-) -> list[dict]:
-    """Generate a batch of training samples."""
-    samples = []
-    for i in range(n_samples):
-        seed = seed_offset + i
-        sample = generate_sample(seed=seed)
-        samples.append(sample)
-    return samples

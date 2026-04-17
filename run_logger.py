@@ -114,105 +114,130 @@ def _render_messages(messages: list, collapse_user: bool = False) -> str:
     )
 
 
+def _split_at_dim_complete(content: str) -> tuple[str, str, str]:
+    """Split assistant content at the DIMENSION_COMPLETE / END_DIMENSION boundary.
+
+    Returns (pre, conclusion, post):
+      pre        — text before DIMENSION_COMPLETE (may be empty)
+      conclusion — from DIMENSION_COMPLETE up to and including END_DIMENSION
+      post       — text after END_DIMENSION (next dimension's thought, may be empty)
+    """
+    dc_match = re.search(r'DIMENSION_COMPLETE', content)
+    if not dc_match:
+        return content, "", ""
+
+    pre = content[:dc_match.start()].strip()
+    rest = content[dc_match.start():]
+    ed_idx = rest.find("END_DIMENSION")
+    if ed_idx >= 0:
+        conclusion = rest[:ed_idx + len("END_DIMENSION")]
+        post = rest[ed_idx + len("END_DIMENSION"):].strip()
+    else:
+        conclusion = rest
+        post = ""
+    return pre, conclusion, post
+
+
+def _dim_divider(content: str) -> str:
+    """Blue divider bar labelled with the dimension name extracted from content."""
+    dim_match = re.search(r'"dimension"\s*:\s*"([^"]+)"', content)
+    dim_name = dim_match.group(1) if dim_match else ""
+    label = f"Dimension: {dim_name}" if dim_name else "Dimension conclusion"
+    return (
+        f'<div style="border-bottom:2px solid #4a90d9; margin:8px 0 14px; padding-bottom:6px;">'
+        f'<b style="color:#4a90d9; font-size:0.85em;">▸ {_e(label)} ✓</b></div>'
+    )
+
+
 def _render_messages_with_dim_markers(messages: list) -> str:
     """Render the full Inspector message chain with dimension dividers.
 
-    Messages containing DIMENSION_COMPLETE are labelled as 'thought'.
-    A divider is inserted AFTER the conclusion to mark the dimension boundary.
+    Labels used:
+      thought     — reasoning text (blue)
+      conclusion  — DIMENSION_COMPLETE JSON block (purple), followed immediately by divider
+      action      — tool calls (green)
+      observation — tool results (green)
+
+    Content is split at the text level so dividers appear right after END_DIMENSION,
+    even when the model writes a Thought for the next dimension in the same response.
     """
     rows = []
-    dim_pattern = re.compile(r'DIMENSION_COMPLETE')
+
+    def _asst_block(label: str, text: str = "", tc_html: str = "") -> str:
+        if label == "conclusion":
+            css, cls = "content-conclusion", "msg-conclusion"
+        elif label == "thought":
+            css, cls = "content-assistant", "msg-thought"
+        else:  # action and fallback
+            css, cls = "content-assistant", "msg-assistant"
+        content_html = f'<pre class="{css}">{_e(text)}</pre>' if text else ""
+        return (
+            f'<div class="msg {cls}">'
+            f'<span class="role">{_e(label)}</span>{content_html}{tc_html}</div>'
+        )
+
+    def _render_content(text: str, tc_html: str = "") -> None:
+        """Recursively render assistant text that may contain multiple DIMENSION_COMPLETE blocks."""
+        if "DIMENSION_COMPLETE" not in text:
+            # Strip ALL_DIMENSIONS_COMPLETE protocol marker; render the rest as thought or action
+            display = text.replace("ALL_DIMENSIONS_COMPLETE", "").strip()
+            if display:
+                rows.append(_asst_block("thought", display))
+            elif text.strip() == "ALL_DIMENSIONS_COMPLETE":
+                rows.append(
+                    f'<div class="msg" style="color:#bbb;font-size:0.8em;font-style:italic;">'
+                    f'ALL_DIMENSIONS_COMPLETE</div>'
+                )
+            if tc_html:
+                rows.append(_asst_block("action", tc_html=tc_html))
+            return
+
+        pre, conclusion, post = _split_at_dim_complete(text)
+        if pre:
+            rows.append(_asst_block("thought", pre))
+        rows.append(_asst_block("conclusion", conclusion))
+        rows.append(_dim_divider(conclusion))
+        # Recurse: post may contain another DIMENSION_COMPLETE (model batched conclusions)
+        _render_content(post, tc_html)
 
     for m in messages:
         role = m.get("role", "")
         label = m.get("react_role") or role
         content = m.get("content") or ""
 
-        has_dim_complete = role == "assistant" and dim_pattern.search(content)
-
-        # Render the message
         if role == "system":
             rows.append(
                 f'<div class="msg msg-system">'
                 f'<span class="role">{_e(label)}</span>'
                 f'<span class="content-sys">{_e(content)}</span></div>'
             )
+
         elif role == "user":
             rows.append(
                 f'<div class="msg msg-user">'
                 f'<span class="role">{_e(label)}</span>'
                 f'<pre class="content-user">{_e(content)}</pre></div>'
             )
+
         elif role == "assistant":
             tool_calls = m.get("tool_calls", [])
+            tc_html = "".join(
+                f'<div class="tool-call">▶ <b>{_e(tc["function"]["name"])}</b>'
+                f'({_e(tc["function"]["arguments"])})</div>'
+                for tc in tool_calls
+            ) if tool_calls else ""
 
-            if has_dim_complete and tool_calls:
-                # Split: render conclusion as thought, then divider, then tool calls as action
-                # ① Conclusion
-                if content and content.strip():
-                    rows.append(
-                        f'<div class="msg msg-assistant">'
-                        f'<span class="role">thought</span>'
-                        f'<pre class="content-assistant">{_e(content)}</pre></div>'
-                    )
-                # ② Divider
-                dim_name = ""
-                dim_match = re.search(r'"dimension"\s*:\s*"([^"]+)"', content)
-                if dim_match:
-                    dim_name = dim_match.group(1)
-                divider_label = f"Dimension: {dim_name}" if dim_name else "Dimension conclusion"
-                rows.append(
-                    f'<div style="border-bottom:2px solid #4a90d9; margin:8px 0 14px; padding-bottom:6px;">'
-                    f'<b style="color:#4a90d9; font-size:0.85em;">▸ {_e(divider_label)} ✓</b></div>'
-                )
-                # ③ Tool calls for next dimension
-                tc_html = "".join(
-                    f'<div class="tool-call">▶ <b>{_e(tc["function"]["name"])}</b>'
-                    f'({_e(tc["function"]["arguments"])})</div>'
-                    for tc in tool_calls
-                )
-                rows.append(
-                    f'<div class="msg msg-assistant">'
-                    f'<span class="role">action</span>{tc_html}</div>'
-                )
-                has_dim_complete = False  # divider already inserted
-            elif tool_calls:
-                tc_html = "".join(
-                    f'<div class="tool-call">▶ <b>{_e(tc["function"]["name"])}</b>'
-                    f'({_e(tc["function"]["arguments"])})</div>'
-                    for tc in tool_calls
-                )
-                content_html = ""
-                if content and content.strip():
-                    content_html = f'<pre class="content-assistant">{_e(content)}</pre>'
-                rows.append(
-                    f'<div class="msg msg-assistant">'
-                    f'<span class="role">{_e(label)}</span>{content_html}{tc_html}</div>'
-                )
+            if "DIMENSION_COMPLETE" in content or tc_html:
+                _render_content(content, tc_html)
             else:
-                cur_label = "thought" if has_dim_complete else label
-                rows.append(
-                    f'<div class="msg msg-assistant">'
-                    f'<span class="role">{_e(cur_label)}</span>'
-                    f'<pre class="content-assistant">{_e(content)}</pre></div>'
-                )
+                # Plain thought or ALL_DIMENSIONS_COMPLETE
+                _render_content(content)
+
         elif role == "tool":
             rows.append(
                 f'<div class="msg msg-tool">'
                 f'<span class="role">{_e(label)}</span>'
                 f'<pre class="content-tool">{_e(content)}</pre></div>'
-            )
-
-        # Insert dimension divider AFTER pure text conclusions (no tool_calls in same message)
-        if has_dim_complete:
-            dim_name = ""
-            dim_match = re.search(r'"dimension"\s*:\s*"([^"]+)"', content)
-            if dim_match:
-                dim_name = dim_match.group(1)
-            divider_label = f"Dimension: {dim_name}" if dim_name else "Dimension conclusion"
-            rows.append(
-                f'<div style="border-bottom:2px solid #4a90d9; margin:8px 0 14px; padding-bottom:6px;">'
-                f'<b style="color:#4a90d9; font-size:0.85em;">▸ {_e(divider_label)} ✓</b></div>'
             )
 
     inner = "\n".join(rows)
@@ -238,18 +263,13 @@ def _render_record(record: dict) -> str:
     # ── Perceiver ─────────────────────────────────────────────────────────────
     perceiver = record.get("perceiver", {})
     planned = perceiver.get("planned_dimensions", [])
-    tool_req = set(perceiver.get("tool_required", planned))
-    dim_badges = []
-    for d in planned:
-        if d in tool_req:
-            dim_badges.append(f'<code>{_e(d)}</code><span class="dim-tag dim-tag-tool">tool</span>')
-        else:
-            dim_badges.append(f'<code>{_e(d)}</code><span class="dim-tag dim-tag-reason">reasoning</span>')
-    dims_html = " &nbsp; ".join(dim_badges) or "—"
+    # Inspector self-determines tool usage per dimension; build badge list from planned only.
+    # Tags are filled in after Inspector results are read below.
+    dims_html_placeholder = " &nbsp; ".join(f'<code>{_e(d)}</code>' for d in planned) or "—"
     parts.append(f"""
 <section>
   <h2>① Perceiver</h2>
-  <p><b>Planned dimensions:</b> {dims_html}</p>
+  <p><b>Planned dimensions:</b> {dims_html_placeholder}</p>
   <p><b>Perception summary:</b> {_e(perceiver.get("perception_summary", ""))}</p>
   {_render_messages(perceiver.get("messages", []))}
 </section>""")
@@ -257,14 +277,30 @@ def _render_record(record: dict) -> str:
     # ── Inspector (per dimension) ─────────────────────────────────────────────
     inspector_items = record.get("inspector", [])
 
+    # Infer per-dimension tool usage from message chain snapshots.
+    # Each dimension's snapshot grows cumulatively; the window for dim N is
+    # messages[prev_len:cur_len]. If any tool message appears there, tools were used.
+    def _infer_used_tools(items: list) -> list[bool]:
+        result = []
+        prev_len = 0
+        for item in items:
+            msgs = item.get("messages", [])
+            window = msgs[prev_len:]
+            used = any(m.get("role") == "tool" for m in window)
+            result.append(used)
+            prev_len = len(msgs)
+        return result
+
+    used_tools_flags = _infer_used_tools(inspector_items)
+
     # Dimension summary cards (no message chain per card)
     dim_cards = []
-    for r in inspector_items:
+    for r, used_tools in zip(inspector_items, used_tools_flags):
         evidence_json = _compact_arrays(
             json.dumps(r.get("evidence", {}), indent=2, cls=NumpyEncoder, ensure_ascii=False)
         )
         dim_name = r["dimension"]
-        if dim_name in tool_req:
+        if used_tools:
             mode_tag = '<span class="dim-tag dim-tag-tool">tool</span>'
         else:
             mode_tag = '<span class="dim-tag dim-tag-reason">reasoning</span>'
@@ -359,10 +395,15 @@ pre.evidence { background: #f4f4f4; border: 1px solid #e4e4e4; border-radius: 4p
 .msg-user .role    { color: #888; }
 pre.content-user   { display: inline; background: none; border: none; padding: 0;
                      font-size: 0.88em; color: #444; white-space: pre-wrap; word-break: break-all; }
+.msg-thought .role   { color: #92400e; }
 .msg-assistant .role { color: #1a6fa8; }
 pre.content-assistant { display: inline; background: none; border: none; padding: 0;
                         font-size: 0.88em; color: #1a1a1a; white-space: pre-wrap; word-break: break-all; }
-.tool-call { font-size: 0.85em; color: #2c7a4b; margin-left: 4px; }
+.msg-conclusion .role { color: #6a1fb5; font-weight: 700; }
+pre.content-conclusion { display: block; background: none; border: none;
+                         padding: 0; margin-top: 4px; margin-left: 0;
+                         font-size: 0.88em; color: #1a1a1a; white-space: pre-wrap; word-break: break-all; }
+.tool-call { font-size: 0.85em; color: #1a6fa8; margin-left: 4px; }
 .msg-tool .role { color: #2c7a4b; }
 pre.content-tool { display: inline; background: none; border: none; padding: 0;
                    font-size: 0.82em; color: #555; white-space: pre-wrap; word-break: break-all; }
@@ -440,7 +481,6 @@ def save_run(
         "perceiver": {
             "perception_summary": state.get("perception_summary", ""),
             "planned_dimensions": state.get("planned_dimensions", []),
-            "tool_required": state.get("tool_required", []),
             "messages": state.get("perceiver_messages", []),
         },
         "inspector": [

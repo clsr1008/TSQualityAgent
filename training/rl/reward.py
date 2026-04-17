@@ -2,12 +2,11 @@
 Reward function for Perceiver GRPO training.
 
 Computes a scalar reward in [-1.0, 1.0] by comparing the model's JSON output
-against ground-truth labels (target_dimensions, tool_required).
+against ground-truth labels (target_dimensions).
 
-Three components:
-  R_format (0.2) — JSON parsability and schema compliance
-  R_dim    (0.5) — F1 score of dimension selection
-  R_tool   (0.3) — tool decision accuracy on correctly predicted dims
+Two components:
+  R_format (0.15) — JSON parsability and schema compliance
+  R_dim    (0.85) — Precision of dimension selection
 """
 import json
 import re
@@ -17,9 +16,8 @@ ALL_DIMENSIONS = [
     "trend", "frequency", "amplitude", "pattern_consistency",
 ]
 
-W_FORMAT = 0.2
-W_DIM = 0.5
-W_TOOL = 0.3
+W_FORMAT = 0.10
+W_DIM = 0.90
 
 
 # ── Parsing ──────────────────────────────────────────────────────────────────
@@ -46,7 +44,6 @@ def validate_schema(parsed: dict) -> bool:
     dims = parsed.get("planned_dimensions")
     if not isinstance(dims, list):
         return False
-    # tool_required defaults to [] if absent — acceptable
     return True
 
 
@@ -64,45 +61,21 @@ def compute_format_reward(text: str) -> tuple[float, dict | None]:
 
 def compute_dimension_reward(predicted_dims: list[str],
                              target_dims: list[str]) -> float:
-    """F1 score between predicted and target dimension sets."""
+    """Precision of predicted vs target dimension sets."""
     pred_set = set(d for d in predicted_dims if d in ALL_DIMENSIONS)
     target_set = set(target_dims)
     if not target_set and not pred_set:
         return 1.0  # both empty = correct (tie case)
-    if not target_set or not pred_set:
+    if not pred_set:
         return 0.0
     tp = len(pred_set & target_set)
-    precision = tp / len(pred_set)
-    recall = tp / len(target_set)
-    if precision + recall == 0:
-        return 0.0
-    return 2 * precision * recall / (precision + recall)
-
-
-def compute_tool_reward(predicted_dims: list[str],
-                        predicted_tool: list[str],
-                        target_dims: list[str],
-                        target_tool: list[str]) -> float:
-    """Tool decision accuracy, evaluated only on correctly predicted dims."""
-    pred_set = set(d for d in predicted_dims if d in ALL_DIMENSIONS)
-    target_set = set(target_dims)
-    overlap = pred_set & target_set
-    if not overlap:
-        return 0.0
-    target_tool_set = set(target_tool)
-    pred_tool_set = set(predicted_tool)
-    correct = sum(
-        1 for d in overlap
-        if (d in pred_tool_set) == (d in target_tool_set)
-    )
-    return correct / len(overlap)
+    return tp / len(pred_set)
 
 
 # ── Main entry ───────────────────────────────────────────────────────────────
 
 def compute_reward(completion: str,
-                   target_dims: list[str],
-                   target_tool: list[str]) -> float:
+                   target_dims: list[str]) -> float:
     """
     Compute scalar reward in [-1.0, 1.0].
 
@@ -110,7 +83,6 @@ def compute_reward(completion: str,
     ----------
     completion : raw text output from the model
     target_dims : ground-truth target_dimensions
-    target_tool : ground-truth tool_required
     """
     r_format, parsed = compute_format_reward(completion)
     if parsed is None:
@@ -118,11 +90,58 @@ def compute_reward(completion: str,
 
     predicted_dims = [d for d in parsed.get("planned_dimensions", [])
                       if d in ALL_DIMENSIONS]
-    predicted_tool = [d for d in parsed.get("tool_required", [])
-                      if d in predicted_dims]
 
     r_dim = compute_dimension_reward(predicted_dims, target_dims)
-    r_tool = compute_tool_reward(
-        predicted_dims, predicted_tool, target_dims, target_tool)
 
-    return W_FORMAT * r_format + W_DIM * r_dim + W_TOOL * r_tool
+    return W_FORMAT * r_format + W_DIM * r_dim
+
+
+# ── TRL-compatible reward functions (split by component) ─────────────────────
+# Each function parses completions only once per batch via a shared cache.
+# TRL calls reward_funcs sequentially on the same batch; the last function
+# clears the cache entry to avoid unbounded memory growth.
+
+_parse_cache: dict = {}
+
+
+def _extract_text(completion) -> str:
+    if isinstance(completion, list):
+        return completion[-1].get("content", "") if completion else ""
+    if isinstance(completion, dict):
+        return completion.get("content", "")
+    return str(completion)
+
+
+def _get_batch_components(completions, target_dimensions):
+    """Parse all completions once; cache by batch object id."""
+    cache_key = id(completions)
+    if cache_key in _parse_cache:
+        return _parse_cache[cache_key]
+
+    r_fmt, r_dim = [], []
+    for completion, tgt_dims in zip(completions, target_dimensions):
+        text = _extract_text(completion)
+        fmt_score, parsed = compute_format_reward(text)
+        r_fmt.append(fmt_score)
+        if parsed is None:
+            r_dim.append(0.0)
+        else:
+            pred_dims = [d for d in parsed.get("planned_dimensions", []) if d in ALL_DIMENSIONS]
+            r_dim.append(compute_dimension_reward(pred_dims, tgt_dims))
+
+    result = (r_fmt, r_dim)
+    _parse_cache[cache_key] = result
+    return result
+
+
+def grpo_reward_format(prompts, completions, target_dimensions, **kwargs):
+    """R_format component for TRL reward_funcs."""
+    r_fmt, _ = _get_batch_components(completions, target_dimensions)
+    return [W_FORMAT * v for v in r_fmt]
+
+
+def grpo_reward_dim(prompts, completions, target_dimensions, **kwargs):
+    """R_dim component for TRL reward_funcs. Clears cache after last function."""
+    _, r_dim = _get_batch_components(completions, target_dimensions)
+    _parse_cache.pop(id(completions), None)
+    return [W_DIM * v for v in r_dim]

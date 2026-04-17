@@ -18,85 +18,86 @@ import numpy as np
 # Tuple (lo, hi) → sampled uniformly; int tuple → randint; scalar → fixed.
 
 DEFECT_VARIANTS = {
+    # Calibration: all methods always detectable without tools → only_severity="heavy"
     "missing_value": [
-        {"method": "random_scatter",
-         "light": {"ratio": (0.02, 0.05)},
-         "heavy": {"ratio": (0.06, 0.12)}},
-        {"method": "burst",
-         "light": {"n_bursts": (1, 2), "burst_ratio": (0.02, 0.04)},
-         "heavy": {"n_bursts": (2, 4), "burst_ratio": (0.04, 0.08)}},
-        {"method": "periodic",
-         "light": {"ratio": (0.02, 0.05), "gap_len": (1, 2)},
-         "heavy": {"ratio": (0.06, 0.12), "gap_len": (2, 4)}},
+        {"method": "random_scatter", "only_severity": "heavy",
+         "heavy": {"ratio": (0.02, 0.08)}},
+        {"method": "burst", "only_severity": "heavy",
+         "heavy": {"n_bursts": (1, 3), "burst_ratio": (0.02, 0.05)}},
+        {"method": "periodic", "only_severity": "heavy",
+         "heavy": {"ratio": (0.02, 0.08), "gap_len": (1, 3)}},
     ],
     "noise_level": [
         {"method": "gaussian",
-         "light": {"multiplier": (1.5, 2.2)},
+         "light": {"multiplier": (1.2, 2.0)},
          "heavy": {"multiplier": (2.5, 4.0)}},
         {"method": "heteroscedastic",
-         "light": {"multiplier": (1.5, 2.2), "affected_ratio": (0.3, 0.5)},
-         "heavy": {"multiplier": (2.5, 4.0), "affected_ratio": (0.5, 0.8)}},
+         "light": {"multiplier": (1.2, 2.0), "affected_ratio": (0.1, 0.2)},
+         "heavy": {"multiplier": (2.5, 4.0), "affected_ratio": (0.3, 0.7)}},
         {"method": "impulsive",
-         "light": {"multiplier": (2.0, 3.0), "burst_ratio": (0.10, 0.20)},
-         "heavy": {"multiplier": (3.5, 5.0), "burst_ratio": (0.20, 0.40)}},
+         "light": {"multiplier": (1.5, 2.0), "burst_ratio": (0.05, 0.10)},
+         "heavy": {"multiplier": (3.0, 5.0), "burst_ratio": (0.15, 0.40)}},
     ],
     "rare_pattern": [
-        {"method": "point_outlier",
-         "light": {"count": (1, 3), "sigma": (3.0, 4.0)},
-         "heavy": {"count": (4, 7), "sigma": (4.0, 5.5)}},
-        {"method": "contextual",
-         "light": {"count": (1, 2), "sigma": (2.5, 3.5), "duration": (3, 6)},
-         "heavy": {"count": (2, 4), "sigma": (3.5, 5.0), "duration": (5, 10)}},
-        {"method": "level_shift",
-         "light": {"count": (1, 2), "sigma": (2.0, 3.0), "duration": (5, 12)},
-         "heavy": {"count": (2, 3), "sigma": (3.0, 5.0), "duration": (10, 15)}},
+        # Calibration: always heavy (detectable without tools) → only used for severity=heavy
+        # Use original light params to keep injection magnitude realistic
+        {"method": "point_outlier", "only_severity": "heavy",
+         "heavy": {"count": (1, 3), "sigma": (2.5, 3.5)}},
+        # Calibration: always light (needs tools) → only used for severity=light
+        # Use original heavy params to ensure the anomaly is actually present in data
+        {"method": "contextual", "only_severity": "light",
+         "light": {"count": (1, 2), "sigma": (4.0, 5.0), "duration": (2, 4)}},
+        # Calibration: always heavy → only used for severity=heavy
+        # Use original light params
+        {"method": "level_shift", "only_severity": "heavy",
+         "heavy": {"count": (1, 2), "sigma": (1.5, 2.5), "duration": (5, 10)}},
     ],
+    # Calibration: all methods always need tools → only_severity="light"
     "trend": [
-        {"method": "flatten",
-         "light": {"flatten_ratio": (0.15, 0.25), "noise_boost": (1.2, 1.8)},
-         "heavy": {"flatten_ratio": (0.25, 0.40), "noise_boost": (2.0, 3.0)}},
-        {"method": "drift",
-         "light": {"drift_strength": (0.3, 0.6)},
-         "heavy": {"drift_strength": (0.8, 1.5)}},
-        {"method": "reversal",
-         "light": {"reverse_ratio": (0.15, 0.25)},
-         "heavy": {"reverse_ratio": (0.25, 0.40)}},
+        {"method": "flatten", "only_severity": "light",
+         "light": {"flatten_ratio": (0.15, 0.40), "noise_boost": (1.2, 3.0)}},
+        {"method": "drift", "only_severity": "light",
+         "light": {"drift_strength": (0.3, 1.5)}},
+        {"method": "reversal", "only_severity": "light",
+         "light": {"reverse_ratio": (0.15, 0.40)}},
     ],
     "frequency": [
+        # competing: n_competing drives light/heavy (n=1 → light, n=2-3 → heavy)
         {"method": "competing",
-         "light": {"n_competing": (1, 1), "competing_amplitude": (0.2, 0.4)},
-         "heavy": {"n_competing": (1, 2), "competing_amplitude": (0.5, 0.8)}},
-        {"method": "jitter",
-         "light": {"jitter_cv": (0.05, 0.10)},
-         "heavy": {"jitter_cv": (0.12, 0.22)}},
-        {"method": "period_shift",
-         "light": {"shift_ratio": (0.15, 0.25), "period_factor": (0.75, 0.85)},
-         "heavy": {"shift_ratio": (0.30, 0.50), "period_factor": (0.50, 0.70)}},
+         "light": {"n_competing": (1, 1), "competing_amplitude": (0.2, 0.5)},
+         "heavy": {"n_competing": (2, 3), "competing_amplitude": (0.7, 0.9)}},
+        # jitter: always light across full param range; use original heavy values for diversity
+        {"method": "jitter", "only_severity": "light",
+         "light": {"jitter_cv": (0.08, 0.22)}},
+        # period_shift: always light across full param range; use original heavy values for diversity
+        {"method": "period_shift", "only_severity": "light",
+         "light": {"shift_ratio": (0.20, 0.50), "period_factor": (0.50, 0.80)}},
     ],
     "amplitude": [
+        # random_scale: cv drives light/heavy; heavy requires cv≥0.85 (acc=0.900 at cv=1.0)
         {"method": "random_scale",
-         "light": {"cv": (0.20, 0.40)},
-         "heavy": {"cv": (0.50, 0.80)}},
-        {"method": "decay",
-         "light": {"decay_factor": (0.55, 0.75)},
-         "heavy": {"decay_factor": (0.20, 0.45)}},
-        {"method": "clip",
-         "light": {"clip_ratio": (0.70, 0.85)},
-         "heavy": {"clip_ratio": (0.40, 0.65)}},
+         "light": {"cv": (0.20, 0.60)},
+         "heavy": {"cv": (0.80, 1.10)}},
+        # decay: always light across full param range; use original heavy values for diversity
+        {"method": "decay", "only_severity": "light",
+         "light": {"decay_factor": (0.20, 0.70)}},
+        # clip: always light across full param range; use original heavy values for diversity
+        {"method": "clip", "only_severity": "light",
+         "light": {"clip_ratio": (0.40, 0.80)}},
     ],
     "pattern_consistency": [
-        {"method": "variance_switching",
-         "light": {"intensity": (0.20, 0.40)},
-         "heavy": {"intensity": (0.50, 0.80)}},
-        {"method": "structural_break",
-         "light": {"intensity": (0.20, 0.40)},
-         "heavy": {"intensity": (0.60, 1.00)}},
-        {"method": "flat_spots",
-         "light": {"intensity": (0.20, 0.40)},
-         "heavy": {"intensity": (0.50, 0.80)}},
-        {"method": "mean_drift",
-         "light": {"drift_std": (0.10, 0.20)},
-         "heavy": {"drift_std": (0.25, 0.50)}},
+        # variance_switching: always heavy across full param range; use original light values for diversity
+        {"method": "variance_switching", "only_severity": "heavy",
+         "heavy": {"intensity": (0.20, 0.60)}},
+        # structural_break: always light across full param range; use original heavy values for diversity
+        {"method": "structural_break", "only_severity": "light",
+         "light": {"intensity": (0.30, 0.80)}},
+        # flat_spots: always light across full param range; use original heavy values for diversity
+        {"method": "flat_spots", "only_severity": "light",
+         "light": {"intensity": (0.30, 0.80)}},
+        # mean_drift: non-monotonic, no reliable heavy threshold; treat as always light
+        {"method": "mean_drift", "only_severity": "light",
+         "light": {"drift_std": (0.20, 0.50)}},
     ],
 }
 
@@ -643,8 +644,12 @@ def inject_defect(
     """
     rng = np.random.default_rng(seed)
 
-    # Pick a random variant
-    variants = DEFECT_VARIANTS[dimension]
+    # Pick a random variant (filter by only_severity if specified)
+    all_variants = DEFECT_VARIANTS[dimension]
+    variants = [v for v in all_variants
+                if v.get("only_severity", severity) == severity]
+    if not variants:
+        variants = all_variants
     variant = variants[int(rng.integers(len(variants)))]
     method = variant["method"]
 

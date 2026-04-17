@@ -308,37 +308,38 @@ SWEEP_CONFIGS: dict[str, list[dict]] = {
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _basic_stats(series: list) -> dict:
+    """Mirror perceiver._basic_stats."""
     arr = np.array(series, dtype=float)
     valid = arr[~np.isnan(arr)]
+    n = len(arr)
     if len(valid) >= 2:
         x = np.where(~np.isnan(arr))[0].astype(float)
         slope = float(np.polyfit(x, valid, 1)[0])
     else:
         slope = None
     return {
-        "length": len(arr),
+        "length": n,
+        "missing_ratio": round(1 - len(valid) / n, 4) if n > 0 else None,
         "mean": round(float(np.mean(valid)), 4) if len(valid) else None,
         "std": round(float(np.std(valid)), 4) if len(valid) else None,
         "min": round(float(np.min(valid)), 4) if len(valid) else None,
         "max": round(float(np.max(valid)), 4) if len(valid) else None,
         "p25": round(float(np.percentile(valid, 25)), 4) if len(valid) else None,
         "p75": round(float(np.percentile(valid, 75)), 4) if len(valid) else None,
-        "nan_count": int(np.isnan(arr).sum()),
         "slope": round(slope, 6) if slope is not None else None,
-        "head": [None if np.isnan(v) else round(v, 4) for v in arr[:8].tolist()],
-        "tail": [None if np.isnan(v) else round(v, 4) for v in arr[-8:].tolist()],
     }
 
 
-def _preview(arr: np.ndarray, max_pts: int = 60) -> list:
+def _preview(arr: np.ndarray, max_full: int = 200, sample_size: int = 60) -> list:
+    """Mirror perceiver._series_preview: full series if ≤ max_full, else sample to sample_size."""
     lst = [None if np.isnan(v) else round(float(v), 4) for v in arr]
-    if len(lst) <= max_pts:
+    if len(lst) <= max_full:
         return lst
-    head = lst[:15]
-    tail = lst[-15:]
-    mid_n = max_pts - 30
-    step = max(1, (len(lst) - 30) // mid_n)
-    mid = lst[15:-15:step][:mid_n]
+    head = lst[:20]
+    tail = lst[-20:]
+    mid_n = sample_size - 40
+    step = max(1, (len(lst) - 40) // mid_n)
+    mid = lst[20:-20:step][:mid_n]
     return head + mid + tail
 
 
@@ -347,7 +348,7 @@ def _preview(arr: np.ndarray, max_pts: int = 60) -> list:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _build_prompt(dim: str, method: str, key_param: str, param_val: float,
-                  arr_a: np.ndarray, arr_b: np.ndarray, desc: str) -> str:
+                  arr_a: np.ndarray, arr_b: np.ndarray) -> str:
     stats_a = _basic_stats(arr_a.tolist())
     stats_b = _basic_stats(arr_b.tolist())
     prev_a = _preview(arr_a)
@@ -355,15 +356,13 @@ def _build_prompt(dim: str, method: str, key_param: str, param_val: float,
 
     return f"""You are a time-series quality expert.
 
-Dataset context: {desc}
-
 Below are two time series (A and B). One of them has been degraded in the
 "{dim}" dimension using the "{method}" injection method. The other is clean.
 
-Series A preview (up to 60 points): {json.dumps(prev_a)}
+Series A preview: {json.dumps(prev_a)}
 Series A stats: {json.dumps(stats_a)}
 
-Series B preview (up to 60 points): {json.dumps(prev_b)}
+Series B preview: {json.dumps(prev_b)}
 Series B stats: {json.dumps(stats_b)}
 
 Task: Based ONLY on the preview values and stats above (no tools available),
@@ -432,7 +431,7 @@ def _evaluate_pair(
     else:
         arr_a, arr_b = base_arr, degraded_arr
 
-    prompt = _build_prompt(dim, method, key_param, param_val, arr_a, arr_b, desc)
+    prompt = _build_prompt(dim, method, key_param, param_val, arr_a, arr_b)
     parsed = _call_llm(llm, prompt)
 
     answer = parsed.get("answer", "?").upper().strip()
@@ -542,9 +541,7 @@ def run_sweep(
                 ci_lo = max(0.0, centre - margin)
                 ci_hi = min(1.0, centre + margin)
 
-                # Mark inconclusive if CI straddles the threshold
-                straddles = ci_lo < HEAVY_THRESHOLD < ci_hi
-                flag = " ?" if straddles else ("  heavy" if ci_lo >= HEAVY_THRESHOLD else "")
+                flag = "  heavy" if acc >= HEAVY_THRESHOLD else ""
 
                 val_str = f"{val:.4g}"
                 results[dim][cfg_key][val_str] = {
@@ -556,10 +553,9 @@ def run_sweep(
                     "n_total": n,
                     "pairs": pairs,
                 }
-                bar = "█" * int(acc * 10) + "░" * (10 - int(acc * 10))
                 ci_str = f"[{ci_lo:.0%}, {ci_hi:.0%}]"
                 print(f"  {val_str:>10}  {acc:>5.0%}  {n_correct:>5}/{n:<5}  "
-                      f"{bar}  {ci_str}{flag}")
+                      f"{ci_str}{flag}")
 
     return results
 
@@ -622,19 +618,11 @@ tr:hover td { background: #f8fafc; }
 .acc   { font-weight: 600; }
 .acc-heavy { color: #16a34a; }
 .acc-light { color: #64748b; }
-.acc-maybe { color: #d97706; }
-.bar-wrap { width: 100px; height: 12px; background: #e2e8f0; border-radius: 3px;
-            overflow: hidden; display: inline-block; vertical-align: middle; }
-.bar-fill { height: 100%; border-radius: 3px; }
-.bar-heavy { background: #16a34a; }
-.bar-light { background: #94a3b8; }
-.bar-maybe { background: #f59e0b; }
 .ci    { color: #94a3b8; font-size: 0.85em; }
 .tag   { font-size: 0.75em; font-weight: 600; padding: 1px 6px; border-radius: 4px;
          display: inline-block; }
 .tag-heavy { background: #dcfce7; color: #16a34a; }
 .tag-light { background: #f1f5f9; color: #64748b; }
-.tag-maybe { background: #fef3c7; color: #d97706; }
 .boundary  { font-size: 0.78em; color: #64748b; margin-top: 2px; margin-bottom: 10px; }
 .boundary b { color: #334155; }
 """
@@ -675,25 +663,18 @@ def _save_html(path: Path, payload: dict) -> None:
                 n_total = e["n_total"]
                 pv = e["param_val"]
 
-                straddles = ci_lo < HEAVY_THRESHOLD < ci_hi
-                is_heavy = ci_lo >= HEAVY_THRESHOLD
+                is_heavy = acc >= HEAVY_THRESHOLD
+                cls = "acc-heavy" if is_heavy else "acc-light"
+                tag = ("<span class='tag tag-heavy'>heavy</span>" if is_heavy
+                       else "<span class='tag tag-light'>light</span>")
 
-                if is_heavy:
-                    cls, bar_cls, tag = "acc-heavy", "bar-heavy", "<span class='tag tag-heavy'>heavy</span>"
-                elif straddles:
-                    cls, bar_cls, tag = "acc-maybe", "bar-maybe", "<span class='tag tag-maybe'>?</span>"
-                else:
-                    cls, bar_cls, tag = "acc-light", "bar-light", "<span class='tag tag-light'>light</span>"
-
-                bar_w = int(acc * 100)
                 rows_html.append(
                     f"<tr>"
                     f"<td class='val'>{pv:.4g}</td>"
                     f"<td class='acc {cls}'>{acc:.0%}</td>"
                     f"<td class='val'>{n_correct}/{n_total}</td>"
-                    f"<td><span class='bar-wrap'>"
-                    f"<span class='bar-fill {bar_cls}' style='width:{bar_w}%'></span>"
-                    f"</span></td>"
+                    f"<td><meter value='{acc:.3f}' min='0' max='1' "
+                    f"style='width:80px;'></meter></td>"
                     f"<td class='ci'>[{ci_lo:.0%}, {ci_hi:.0%}]</td>"
                     f"<td>{tag}</td>"
                     f"</tr>"
@@ -736,8 +717,6 @@ def main():
     parser.add_argument("--out", type=str, default=None,
                         help="Save full results JSON to this path "
                              "(default: logs/calibration_<timestamp>.json)")
-    parser.add_argument("--no_save", action="store_true", default=False,
-                        help="Do not save results to disk (print only)")
     args = parser.parse_args()
 
     api_key = args.api_key or os.environ.get("OPENAI_API_KEY", "EMPTY")
@@ -757,42 +736,41 @@ def main():
     results = run_sweep(llm, dims, n_pairs=args.n_pairs, base_seed=args.seed)
     suggestions = suggest_boundaries(results)
 
-    if not args.no_save:
-        if args.out:
-            out_path = Path(args.out)
-        else:
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            dim_tag = "_".join(dims) if len(dims) <= 3 else f"{len(dims)}dims"
-            out_path = Path("logs") / f"calibration_{dim_tag}_{ts}.json"
-        out_path.parent.mkdir(parents=True, exist_ok=True)
+    if args.out:
+        out_path = Path(args.out)
+    else:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        dim_tag = "_".join(dims) if len(dims) <= 3 else f"{len(dims)}dims"
+        out_path = Path("logs") / f"calibration_{dim_tag}_{ts}.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Strip per-pair details — only keep the summary stats per param value
-        summary_results = {
-            dim: {
-                cfg_key: {
-                    val_str: {k: v for k, v in entry.items() if k != "pairs"}
-                    for val_str, entry in vals_dict.items()
-                }
-                for cfg_key, vals_dict in method_params.items()
+    # Strip per-pair details — only keep the summary stats per param value
+    summary_results = {
+        dim: {
+            cfg_key: {
+                val_str: {k: v for k, v in entry.items() if k != "pairs"}
+                for val_str, entry in vals_dict.items()
             }
-            for dim, method_params in results.items()
+            for cfg_key, vals_dict in method_params.items()
         }
-        payload = {
-            "meta": {
-                "model": args.model,
-                "dims": dims,
-                "n_pairs": args.n_pairs,
-                "seed": args.seed,
-                "timestamp": datetime.now().isoformat(),
-            },
-            "results": summary_results,
-            "suggestions": suggestions,
-        }
-        out_path.write_text(json.dumps(payload, indent=2))
-        html_path = out_path.with_suffix(".html")
-        _save_html(html_path, payload)
-        print(f"\nResults saved to : {out_path}")
-        print(f"HTML report      : {html_path}")
+        for dim, method_params in results.items()
+    }
+    payload = {
+        "meta": {
+            "model": args.model,
+            "dims": dims,
+            "n_pairs": args.n_pairs,
+            "seed": args.seed,
+            "timestamp": datetime.now().isoformat(),
+        },
+        "results": summary_results,
+        "suggestions": suggestions,
+    }
+    out_path.write_text(json.dumps(payload, indent=2))
+    html_path = out_path.with_suffix(".html")
+    _save_html(html_path, payload)
+    print(f"\nResults saved to : {out_path}")
+    print(f"HTML report      : {html_path}")
 
 
 if __name__ == "__main__":

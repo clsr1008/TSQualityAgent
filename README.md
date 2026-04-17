@@ -71,12 +71,21 @@ python main.py --model gpt-4o-mini
 启动 vLLM 服务（需 `vllm>=0.8.5`，首次运行自动从 HuggingFace 下载模型）：
 
 ```bash
-CUDA_VISIBLE_DEVICES=2 vllm serve Qwen/Qwen3-4B \
-    --port 8000 \
+CUDA_VISIBLE_DEVICES=3 vllm serve Qwen/Qwen3-4B \
+    --port 8001 \
     --tensor-parallel-size 1 \
     --enable-auto-tool-choice \
     --tool-call-parser hermes \
     --max-model-len 32768
+    
+CUDA_VISIBLE_DEVICES=2 vllm serve Qwen/Qwen3-4B \
+    --enable-lora \
+    --lora-modules perceiver-grpo-v1=training/checkpoints/perceiver-grpo-v1 \
+    --enable-auto-tool-choice \
+    --tool-call-parser hermes \
+    --port 8000 \
+    --max-model-len 32768
+
 ```
 
 然后运行 agent：
@@ -104,7 +113,15 @@ python main.py --case rare_point rare_contextual
 python main.py --model gpt-4o --case trend frequency
 
 # 使用本地 Qwen3-4B
-python main.py --model Qwen/Qwen3-4B --base_url http://localhost:8000/v1 --api_key EMPTY
+python main.py --model Qwen/Qwen3-4B --base_url http://localhost:8001/v1 --api_key EMPTY
+python main.py --model perceiver-grpo-v1 --base_url http://localhost:8000/v1 --api_key EMPTY
+
+python main.py \
+      --model Qwen/Qwen3-4B \
+      --base_url http://localhost:8001/v1 \
+      --perceiver_model perceiver-grpo-v2 \
+      --perceiver_base_url http://localhost:8000/v1 \
+      --api_key EMPTY
 
 # 调整 Inspector 最大推理步数和反思次数
 python main.py --max_steps 8 --max_recheck 3 --max_replan 2

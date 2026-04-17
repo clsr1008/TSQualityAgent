@@ -41,18 +41,19 @@ SEASONAL_TYPES = {
     "mixed":    0.23,   # sum of 2-3 sine harmonics
 }
 
-COMPOSITION_TYPES = {
-    "additive":       0.55,   # y = trend + seasonal + noise
-    "multiplicative": 0.30,   # y = trend_pos * (1 + α·seasonal_norm) + noise
-    "sequential":     0.15,   # y = [seg₁ | seg₂ | ...] + noise
-}
-
 NOISE_TYPES = {
     "white":           0.45,   # Gaussian iid
     "ar1":             0.30,   # AR(1) correlated
     "heteroscedastic": 0.15,   # time-varying variance
     "random_walk":     0.10,   # non-stationary drift (detrended)
 }
+
+COMPOSITION_TYPES = {
+    "additive":       0.55,   # y = trend + seasonal + noise
+    "multiplicative": 0.30,   # y = trend_pos * (1 + α·seasonal_norm) + noise
+    "sequential":     0.15,   # y = [seg₁ | seg₂ | ...] + noise
+}
+
 
 # Scenario descriptions for realistic context (Perceiver uses these)
 SCENARIO_POOL = [
@@ -112,6 +113,14 @@ def _make_trend(n: int, trend_type: str, rng: np.random.Generator) -> tuple[np.n
     elif trend_type == "piecewise":
         n_turning = rng.integers(1, 5)  # 1-4 turning points
         min_gap = max(10, n // 8)
+
+        # Fall back to linear if segment too short for piecewise
+        if n <= 2 * min_gap:
+            slope = rng.uniform(-2, 2)
+            start = rng.uniform(-3, 3)
+            meta["start"] = round(start, 4)
+            meta["slope"] = round(slope, 4)
+            return np.linspace(start, start + slope * n, n), meta
 
         # Generate keypoints with minimum spacing (ChatTS approach)
         inner_x = []
@@ -428,6 +437,8 @@ def generate_random_base(
         attribute_pool["segments"] = comp_meta["segments"]
 
     return series, attribute_pool, desc
+
+
 
 
 # ── Deterministic generator (for explicit control) ───────────────────────────

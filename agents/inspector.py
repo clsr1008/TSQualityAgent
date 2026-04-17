@@ -52,8 +52,8 @@ _JSON_EXAMPLE = """{
 
 UNIFIED_SYSTEM_PROMPT = """You are the Inspector agent in a time series quality assessment pipeline.
 
-You assess multiple quality dimensions of two time series (A and B) by calling tools.
-Follow the ReAct loop: Thought → Action → Observation.
+You assess multiple quality dimensions of two time series (A and B) using a ReAct loop:
+Thought → (Action → Observation)? → DIMENSION_COMPLETE
 
 """ + DIMENSION_GUIDE + """
 
@@ -69,16 +69,37 @@ calling any tools and reasoning for the next dimension. Do NOT batch all tool ca
 conclusions at the end — that wastes steps and loses the benefit of earlier findings.**
 
 For each dimension:
-1. Think about what tools to call. **Reuse observations from earlier dimensions** — do NOT re-call
-   a tool whose results you already have in the conversation history.
-2. Call only the tools needed for THIS dimension.
-3. Output the DIMENSION_COMPLETE block for THIS dimension immediately:
+
+**Step 1 — Decide: reasoning-only or use tools?**
+In your Thought, explicitly ask: *"Can I determine the winner for this dimension with confidence
+from the series preview and existing observations in context?"*
+
+Use **reasoning only** (skip tool calls) when:
+- The difference is visually obvious from the preview (e.g., clear missing gaps, stark amplitude gap,
+  visible upward trend in one series but not the other).
+- You already have sufficient numerical evidence from tool calls made for earlier dimensions.
+
+Use **tools** when:
+- The difference is subtle or ambiguous from the preview alone.
+- You need precise measurement that the preview cannot provide
+  (e.g., exact outlier z-scores, spectral correlation, rolling std across a long series).
+
+State your decision explicitly:
+  "I can reason directly because …" → proceed to Step 3.
+  "I need tools because …" → proceed to Step 2.
+
+**Step 2 — Call tools (only if needed)**
+Call only the minimum tools required for THIS dimension.
+**Reuse observations from earlier dimensions** — do NOT re-call a tool whose results are already
+in the conversation history.
+
+**Step 3 — Output DIMENSION_COMPLETE immediately**
 
 DIMENSION_COMPLETE
 """ + _JSON_EXAMPLE + """
 END_DIMENSION
 
-4. Only THEN move to the next dimension.
+**Step 4 — Move to the next dimension.**
 
 After completing ALL dimensions, output:
 ALL_DIMENSIONS_COMPLETE
@@ -88,9 +109,7 @@ confidence reflects how much better the winner is, not just certainty:
 
 ## Parameter Selection
 Tool window/threshold parameters auto-adapt when omitted, but you should override them
-based on the series preview (length, scale, visible patterns) when appropriate.
-
-Every dimension conclusion SHOULD be backed by tool observations — do NOT rely on perception_summary alone."""
+based on the series preview (length, scale, visible patterns) when appropriate. """
 
 
 
@@ -225,7 +244,6 @@ def _assess_all_dimensions(
     max_steps: int,
     perception_summary: str = "",
     feedback: str = "",
-    tool_required: list[str] | None = None,
 ) -> list[DimensionResult]:
     """Run a single unified ReAct session assessing all dimensions."""
 
@@ -233,21 +251,12 @@ def _assess_all_dimensions(
     preview_B = _series_preview(series_B)
     cache = ToolCache()
 
-    if tool_required is None:
-        tool_required = dimensions
-
-    reasoning_only = [d for d in dimensions if d not in tool_required]
-
-    dim_lines = []
-    for i, d in enumerate(dimensions):
-        tag = " [reasoning-only]" if d in reasoning_only else " [use tools]"
-        dim_lines.append(f"  {i + 1}. {d}{tag}")
-    dim_list = "\n".join(dim_lines)
+    dim_list = "\n".join(f"  {i + 1}. {d}" for i, d in enumerate(dimensions))
 
     user_msg = (
         f"Assess the following quality dimensions for series A and B, in this order:\n{dim_list}\n\n"
-        f"Dimensions marked [use tools]: call tools to collect evidence.\n"
-        f"Dimensions marked [reasoning-only]: use your own reasoning based on the preview and domain knowledge — no tool calls needed.\n\n"
+        f"For each dimension, decide first whether you can reach a confident conclusion from the "
+        f"preview alone. If yes, reason directly. If not, call the appropriate tools.\n\n"
         f"Series A ({len(series_A)} points{', sampled' if len(series_A) > 200 else ''}):\n"
         f"{json.dumps(preview_A)}\n\n"
         f"Series B ({len(series_B)} points{', sampled' if len(series_B) > 200 else ''}):\n"
@@ -265,6 +274,18 @@ def _assess_all_dimensions(
 
     completed: dict[str, DimensionResult] = {}
     total_steps = max_steps * len(dimensions)
+
+    def _record(parsed: dict) -> None:
+        dim = parsed["dimension"]
+        if dim in dimensions and dim not in completed:
+            completed[dim] = DimensionResult(
+                dimension=dim,
+                winner=parsed.get("winner", "tie"),
+                confidence=round(float(parsed.get("confidence", 0.0)), 4),
+                evidence=parsed.get("evidence", {}),
+                conclusion=parsed.get("conclusion", ""),
+                messages=_annotate_react_roles(list(messages)),
+            )
 
     for step in range(total_steps):
         response: LLMResponse = llm.chat_with_tools(messages, TOOL_SCHEMAS)
@@ -285,6 +306,11 @@ def _assess_all_dimensions(
                     for tc in response.tool_calls
                 ],
             })
+
+            if response.content:
+                for parsed in _parse_dimension_results(response.content):
+                    _record(parsed)
+
             for tc in response.tool_calls:
                 args = dict(tc.arguments)
                 obs = _call_tool(tc.name, args, series_A, series_B, cache)
@@ -293,38 +319,13 @@ def _assess_all_dimensions(
                     "tool_call_id": tc.id,
                     "content": json.dumps(obs, cls=NumpyEncoder),
                 })
-
-            # Also check if the assistant content contains dimension results
-            if response.content:
-                for parsed in _parse_dimension_results(response.content):
-                    dim = parsed["dimension"]
-                    if dim in dimensions and dim not in completed:
-                        completed[dim] = DimensionResult(
-                            dimension=dim,
-                            winner=parsed.get("winner", "tie"),
-                            confidence=round(float(parsed.get("confidence", 0.0)), 4),
-                            evidence=parsed.get("evidence", {}),
-                            conclusion=parsed.get("conclusion", ""),
-                            messages=_annotate_react_roles(list(messages)),
-                        )
         else:
             text = response.content or ""
             messages.append({"role": "assistant", "content": text})
 
-            # Parse any completed dimensions from this response
             for parsed in _parse_dimension_results(text):
-                dim = parsed["dimension"]
-                if dim in dimensions and dim not in completed:
-                    completed[dim] = DimensionResult(
-                        dimension=dim,
-                        winner=parsed.get("winner", "tie"),
-                        confidence=round(float(parsed.get("confidence", 0.0)), 4),
-                        evidence=parsed.get("evidence", {}),
-                        conclusion=parsed.get("conclusion", ""),
-                        messages=_annotate_react_roles(list(messages)),
-                    )
+                _record(parsed)
 
-            # Check if all dimensions are done
             if "ALL_DIMENSIONS_COMPLETE" in text or len(completed) == len(dimensions):
                 break
 
@@ -342,16 +343,7 @@ def _assess_all_dimensions(
         messages.append({"role": "assistant", "content": text})
 
         for parsed in _parse_dimension_results(text):
-            dim = parsed["dimension"]
-            if dim in dimensions and dim not in completed:
-                completed[dim] = DimensionResult(
-                    dimension=dim,
-                    winner=parsed.get("winner", "tie"),
-                    confidence=round(float(parsed.get("confidence", 0.0)), 4),
-                    evidence=parsed.get("evidence", {}),
-                    conclusion=parsed.get("conclusion", ""),
-                    messages=_annotate_react_roles(list(messages)),
-                )
+            _record(parsed)
 
     # Last resort: fill any still-missing dimensions with defaults
     for dim in dimensions:
@@ -378,16 +370,12 @@ def run_inspector(state: AgentState, llm: BaseLLM, max_steps: int = 6) -> dict:
     reflection_type = state.get("reflection_type")
     feedback = state.get("reflection_feedback", "")
     perception_summary = state.get("perception_summary", "")
-    tool_required = state.get("tool_required", [])
 
     # Determine which dimensions to process
     if reflection_type == "needs_recheck":
         dims_to_run = state.get("recheck_dimensions") or state.get("planned_dimensions", [])
-        # Recheck dimensions always use tools
-        tool_required_for_run = dims_to_run
     else:
         dims_to_run = state.get("planned_dimensions", [])
-        tool_required_for_run = [d for d in tool_required if d in dims_to_run]
 
     # Merge results: keep old results for dims not being rechecked
     existing = {r["dimension"]: r for r in state.get("dimension_results", [])}
@@ -395,7 +383,6 @@ def run_inspector(state: AgentState, llm: BaseLLM, max_steps: int = 6) -> dict:
     new_results = _assess_all_dimensions(
         dims_to_run, series_A, series_B, llm, max_steps,
         perception_summary, feedback,
-        tool_required=tool_required_for_run,
     )
     for result in new_results:
         existing[result["dimension"]] = result

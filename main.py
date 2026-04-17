@@ -3,7 +3,7 @@ TSqualityAgent – entry point
 """
 import argparse
 from dataclasses import asdict
-from config import Config, build_llm
+from config import Config, build_llm, build_perceiver_llm
 from models.llm import CHATANYWHERE_BASE_URL
 from workflow import run_pipeline
 from synthetic_cases import get_cases, CASE_NAMES
@@ -37,6 +37,20 @@ if __name__ == "__main__":
         type=str,
         default="",
         help="API key. Leave empty to use OPENAI_API_KEY env var. Use 'EMPTY' for local vLLM.",
+    )
+    parser.add_argument(
+        "--perceiver_model",
+        type=str,
+        default="",
+        help="Model name for the Perceiver agent only (e.g. a LoRA alias). "
+             "Defaults to --model when not set.",
+    )
+    parser.add_argument(
+        "--perceiver_base_url",
+        type=str,
+        default="",
+        help="Base URL for the Perceiver agent only (e.g. a separate vLLM port). "
+             "Defaults to --base_url when not set.",
     )
     parser.add_argument(
         "--enable_thinking",
@@ -80,19 +94,22 @@ if __name__ == "__main__":
 
     cfg = Config.from_args(args)
     llm = build_llm(cfg)
+    perceiver_llm = build_perceiver_llm(cfg)
 
     cases = None if (args.case is None or "all" in args.case) else args.case
     test_cases = get_cases(cases)
 
     case_label = " ".join(args.case) if args.case else "all"
-    print(f"\nModel: {args.model}  |  Base URL: {args.base_url}  |  Case: {case_label}  |  Cases: {len(test_cases)}")
+    perceiver_model_label = cfg.perceiver_model or cfg.model
+    perceiver_url_label = cfg.perceiver_base_url or cfg.base_url
+    print(f"\nModel: {args.model} ({args.base_url})  |  Perceiver: {perceiver_model_label} ({perceiver_url_label})  |  Case: {case_label}  |  Cases: {len(test_cases)}")
 
     for name, input_data in test_cases:
         print(f"\n{'=' * 60}")
         print(f"  {name}")
         print("=" * 60)
 
-        state = run_pipeline(input_data, llm, cfg)
+        state = run_pipeline(input_data, llm, cfg, perceiver_llm=perceiver_llm)
         result = state.get("final_result", {})
 
         print(f"  Winner     : {result.get('winner', 'N/A').upper()}")

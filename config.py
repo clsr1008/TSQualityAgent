@@ -17,6 +17,10 @@ class Config:
     max_steps_per_dimension: int    # Inspector ReAct steps per dimension
     max_recheck: int                # Adjudicator → Inspector recheck limit
     max_replan: int                 # Adjudicator → Perceiver replan limit
+    perceiver_model: str = ""       # Override model for Perceiver only (e.g. LoRA alias).
+                                    # Falls back to `model` when empty.
+    perceiver_base_url: str = ""    # Override base_url for Perceiver only.
+                                    # Falls back to `base_url` when empty.
 
     @classmethod
     def from_args(cls, args) -> "Config":
@@ -29,6 +33,8 @@ class Config:
             max_steps_per_dimension=args.max_steps,
             max_recheck=args.max_recheck,
             max_replan=args.max_replan,
+            perceiver_model=getattr(args, "perceiver_model", "") or "",
+            perceiver_base_url=getattr(args, "perceiver_base_url", "") or "",
         )
 
 
@@ -37,6 +43,21 @@ def build_llm(config: Config) -> BaseLLM:
     return OpenAICompatibleLLM(
         model=config.model,
         base_url=config.base_url,
+        api_key=api_key,
+        enable_thinking=config.enable_thinking,
+    )
+
+
+def build_perceiver_llm(config: Config) -> BaseLLM:
+    """Return a dedicated LLM for the Perceiver agent.
+
+    Uses perceiver_model / perceiver_base_url when specified,
+    otherwise falls back to the default model / base_url.
+    """
+    api_key = config.api_key or os.environ.get("OPENAI_API_KEY", "EMPTY")
+    return OpenAICompatibleLLM(
+        model=config.perceiver_model or config.model,
+        base_url=config.perceiver_base_url or config.base_url,
         api_key=api_key,
         enable_thinking=config.enable_thinking,
     )

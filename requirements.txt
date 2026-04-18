@@ -1,4 +1,4 @@
-numpy
+numpy>=1.26.0
 scipy
 statsmodels
 ruptures
@@ -16,3 +16,9 @@ peft>=0.13.0
 trl>=0.15.0
 datasets>=3.0.0
 accelerate>=1.0.0
+
+# evaluation
+scikit-learn
+sktime
+reformer-pytorch
+PyWavelets

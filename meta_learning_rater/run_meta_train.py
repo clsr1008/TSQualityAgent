@@ -4,9 +4,10 @@ Meta-training CLI for TSRater.
 Trains a MAML-based quality scoring model across all annotated datasets,
 with optional Optuna hyperparameter search.
 
-Best hyperparameters from paper §C.3:
-  meta_lr=2.5e-4, inner_lr=4e-3, inner_steps=14,
-  meta_batch_size=10, data_batch_size=16, epochs=7
+Best hyperparameters (from Optuna search, acc=0.5788):
+  meta_lr=1.335e-5, inner_lr=1.081e-2, inner_steps=20,
+  meta_batch_size=12, data_batch_size=16, epochs=12
+  Note: inner_steps = exact number of gradient updates (not epochs)
 
 Usage
 -----
@@ -15,12 +16,12 @@ python -m meta_learning_rater.run_meta_train \
     --config annotation/dataset_configs.json \
     --output meta_learning_rater/checkpoints/tsrater.pth
 
-# Hyperparameter search via Optuna (50 trials)
+# Hyperparameter search via Optuna (20 trials)
 python -m meta_learning_rater.run_meta_train \
     --config annotation/dataset_configs.json \
     --output meta_learning_rater/checkpoints/tsrater.pth \
     --tune \
-    --n_trials 50
+    --n_trials 20
 
 # Score a dataset after training
 python -m meta_learning_rater.score \
@@ -124,13 +125,13 @@ def main() -> None:
     parser.add_argument("--min_confidence", type=float, default=0.5,
                         help="|2p-1| >= this to include a pair (default 0.5)")
 
-    # Training hyperparameters (paper's best config)
-    parser.add_argument("--meta_lr",        type=float, default=2.5e-4)
-    parser.add_argument("--inner_lr",       type=float, default=4e-3)
-    parser.add_argument("--inner_steps",    type=int,   default=14)
-    parser.add_argument("--meta_batch_size",type=int,   default=10)
+    # Training hyperparameters (best config from Optuna search, acc=0.5788)
+    parser.add_argument("--meta_lr",        type=float, default=1.335e-5)
+    parser.add_argument("--inner_lr",       type=float, default=1.081e-2)
+    parser.add_argument("--inner_steps",    type=int,   default=20)
+    parser.add_argument("--meta_batch_size",type=int,   default=12)
     parser.add_argument("--data_batch_size",type=int,   default=16)
-    parser.add_argument("--epochs",         type=int,   default=7)
+    parser.add_argument("--epochs",         type=int,   default=12)
 
     # Optuna search
     parser.add_argument("--tune", action="store_true",
@@ -209,11 +210,11 @@ def main() -> None:
         def objective(trial: optuna.Trial) -> float:
             nonlocal best_acc, best_model
 
-            meta_lr        = trial.suggest_float("meta_lr",   2e-4, 5e-4, log=True)
-            inner_lr       = trial.suggest_float("inner_lr",  1e-3, 5e-3, log=True)
-            inner_steps    = trial.suggest_int  ("inner_steps", 10, 20)
+            meta_lr        = trial.suggest_float("meta_lr",   1e-5, 5e-4, log=True)
+            inner_lr       = trial.suggest_float("inner_lr",  0.01, 0.5,  log=True)
+            inner_steps    = trial.suggest_int  ("inner_steps", 5, 20)
             meta_batch_size= trial.suggest_int  ("meta_batch_size", 5, 15)
-            epochs         = trial.suggest_int  ("epochs", 5, 10)
+            epochs         = trial.suggest_int  ("epochs", 10, 20)
 
             acc, model = train_and_eval(
                 task_datasets, input_dim,

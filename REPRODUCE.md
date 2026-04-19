@@ -23,9 +23,9 @@ pip install -r requirements.txt
 训练流程：
   Step 1  training/synthesis/   合成 Perceiver 训练数据
   Step 2  training/rl/          Perceiver GRPO 强化学习
-  Step 4  annotation/           用训练好的 Agent 对 23 个数据集做成对标注
-  Step 5  meta_learning_rater/  MAML 元学习训练 TSRater 打分模型
-  Step 6  evaluation/           数据选择实验，验证评分效果
+  Step 3  annotation/           用训练好的 Agent 对 23 个数据集做成对标注
+  Step 4  meta_learning_rater/  MAML 元学习训练 TSRater 打分模型
+  Step 5  evaluation/           数据选择实验，验证评分效果
 ```
 
 ---
@@ -130,7 +130,7 @@ CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 \
 
 ---
 
-## 模块五：成对标注（`annotation/`）
+## 模块四：成对标注（`annotation/`）
 
 ### 功能
 对 23 个时间序列数据集中的 `blocks.jsonl` 进行成对比较标注。每对样本调用完整 Agent 流程（Perceiver + Inspector + Adjudicator），输出胜者与置信度。每个数据集目标收集 **500 个高置信度有效对**（`|2p-1| ≥ 0.5`），小数据集以 `C(N,2)` 为上限。标注结果保存为 `datasets/<name>/annotation.jsonl`。
@@ -165,7 +165,7 @@ python -m annotation.run_annotation \
 
 ---
 
-## 模块六：元学习打分模型（`meta_learning_rater/`）
+## 模块五：元学习打分模型（`meta_learning_rater/`）
 
 ### 功能
 基于 MAML（Model-Agnostic Meta-Learning）训练跨数据集的质量打分模型 TSRater。
@@ -203,7 +203,47 @@ python -m meta_learning_rater.score \
 
 ---
 
-## 模块七：数据选择评估（`evaluation/`）
+## 模块五（分支）：Per-dataset Single Rater（`meta_learning_rater/train_single.py`）
+
+### 功能
+不使用元学习，直接对每个数据集独立训练一个 Bradley-Terry 打分模型。
+每个数据集对应一个 checkpoint（`rater_<name>.pth`），打分时同样调用 `score.py`，通过 `--model_dir` 加载。
+
+相比 MAML 分支，该方案更简单稳定，在单数据集上准确率更高，推荐作为主要实验方案。
+
+**前置条件**：各数据集的 `annotation.jsonl` 已生成。
+
+### 运行
+
+```bash
+# 训练单个数据集的 rater
+python -m meta_learning_rater.train_single \
+    --blocks     datasets/weather/blocks.jsonl \
+    --annotation datasets/weather/annotation.jsonl \
+    --output     meta_learning_rater/checkpoints/rater_weather.pth
+
+# 批量训练所有数据集（checkpoint 命名为 rater_<dataset_name>.pth）
+python -m meta_learning_rater.train_single \
+    --config     annotation/dataset_configs.json \
+    --output_dir meta_learning_rater/checkpoints/
+
+# 对单个数据集打分（使用对应 checkpoint）
+python -m meta_learning_rater.score \
+    --blocks     datasets/weather/blocks.jsonl \
+    --model      meta_learning_rater/checkpoints/rater_weather.pth \
+    --annotation datasets/weather/annotation.jsonl
+
+# 批量打分（自动匹配 rater_<name>.pth，scores.jsonl 输出到各数据集目录）
+python -m meta_learning_rater.score \
+    --config     annotation/dataset_configs.json \
+    --model_dir  meta_learning_rater/checkpoints/
+```
+
+> **当前状态**：标注完成后方可运行。打分结果存储为各数据集目录下的 `scores.jsonl`。
+
+---
+
+## 模块六：数据选择评估（`evaluation/`）
 
 ### 功能
 通过"用质量分数选 top-50% 训练样本，训练下游预测/分类模型"来验证 TSRater 评分的有效性。支持三类任务：
@@ -270,7 +310,7 @@ CUDA_VISIBLE_DEVICES=3 python -m evaluation.run_eval \
 
 ## 硬件建议
 
-- 标注（模块六）：GPU 显存 ≥ 24GB，建议 vLLM 服务运行在 GPU 3（A5880 48GB）
+- 标注（模块四）：GPU 显存 ≥ 24GB，建议 vLLM 服务运行在 GPU 3（A5880 48GB）
 - GRPO 训练：单卡 48GB 或双卡 24GB×2
 - meta_learning_rater：CPU 或单卡均可（MOMENT 推理 + MLP 训练，显存需求低）
 - evaluation：单卡即可（Linear/CNN/PatchTST 小模型）

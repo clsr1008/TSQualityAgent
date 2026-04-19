@@ -1,14 +1,12 @@
 """
 MAML meta-learning loop for the TSRater.
 
-Algorithm (following paper §C.3 / original meta_rater/maml.py):
-  Outer loop: sample meta_batch_size tasks per epoch
-  Inner loop: adapt meta_model on support set for inner_steps using signSGD
-  Outer update: compute meta-loss on query set, backprop through inner loop
+Inner loop: signSGD over all support batches for inner_steps epochs.
+Outer loop: per-task meta_optimizer zero_grad / backward / step.
 
 Evaluation:
-  Few-shot fine-tune adapted model on a small support split, then measure
-  pairwise ranking accuracy on the held-out test set.
+  Few-shot fine-tune adapted model on a small support slice of test,
+  then measure pairwise ranking accuracy on the held-out test set.
 """
 from __future__ import annotations
 
@@ -38,15 +36,15 @@ class MetaLearner:
         self.inner_steps = inner_steps
         self.loss_fn     = BradleyTerryLoss()
 
-        self.meta_model = ScoreModel(input_dim, hidden_dim, num_layers).to(self.device)
-        self.meta_optimizer = optim.Adam(self.meta_model.parameters(), lr=meta_lr)
+        self.meta_model     = ScoreModel(input_dim, hidden_dim, num_layers).to(self.device)
+        self.meta_optimizer = optim.SGD(self.meta_model.parameters(), lr=meta_lr)
 
-    # ── Inner loop ────────────────────────────────────────────────────────────
+    # ── Inner loop (signSGD, matches meta_rater/maml.py) ─────────────────────
 
     def _inner_adapt(self, support_loader: DataLoader) -> ScoreModel:
         """
-        Clone meta_model and adapt on support set via signSGD for inner_steps.
-        Returns the adapted (task-specific) model.
+        Inner loop: inner_steps epochs over the full support set using signSGD.
+        create_graph=True retained for compatibility with original code.
         """
         fmodel = copy.deepcopy(self.meta_model)
         fmodel.train()
@@ -61,8 +59,7 @@ class MetaLearner:
                 scores_b = fmodel(emb_b)
                 loss = self.loss_fn(scores_a, scores_b, p)
 
-                grads = torch.autograd.grad(loss, fmodel.parameters(),
-                                            create_graph=True)
+                grads = torch.autograd.grad(loss, fmodel.parameters(), create_graph=True)
                 with torch.no_grad():
                     for param, grad in zip(fmodel.parameters(), grads):
                         param -= self.inner_lr * grad.sign()
@@ -78,7 +75,6 @@ class MetaLearner:
         data_batch_size: int = 16,
         epochs: int = 7,
     ) -> None:
-        """Run MAML meta-training over task_datasets."""
         for epoch in range(epochs):
             sampled = random.sample(
                 task_datasets, min(meta_batch_size, len(task_datasets))
@@ -95,27 +91,23 @@ class MetaLearner:
                     shuffle=True, num_workers=0,
                 )
 
-                # Inner loop
                 fmodel = self._inner_adapt(support_loader)
 
-                # Outer loss on query set
+                # Compute meta loss on query set
                 fmodel.eval()
-                meta_loss = torch.tensor(0.0, device=self.device)
+                meta_loss = 0.0
                 for emb_a, emb_b, p in query_loader:
                     emb_a = emb_a.to(self.device)
                     emb_b = emb_b.to(self.device)
                     p     = p.to(self.device)
-                    scores_a = fmodel(emb_a)
-                    scores_b = fmodel(emb_b)
-                    meta_loss = meta_loss + self.loss_fn(scores_a, scores_b, p)
+                    meta_loss += self.loss_fn(fmodel(emb_a), fmodel(emb_b), p)
 
                 self.meta_optimizer.zero_grad()
                 meta_loss.backward()
                 self.meta_optimizer.step()
                 total_meta_loss += meta_loss.item()
 
-            avg_loss = total_meta_loss / len(sampled)
-            print(f"[Epoch {epoch + 1}/{epochs}]  meta_loss={avg_loss:.4f}")
+            print(f"[Epoch {epoch+1}/{epochs}]  meta_loss={total_meta_loss / len(sampled):.4f}")
 
     # ── Evaluation ────────────────────────────────────────────────────────────
 
@@ -127,14 +119,6 @@ class MetaLearner:
         adaptation_steps: int = 10,
         adaptation_lr: float = 5e-3,
     ) -> float:
-        """
-        Evaluate on the test set of each task.
-
-        For each task:
-          1. Few-shot fine-tune (adaptation_steps) on a small support slice of test
-          2. Measure pairwise ranking accuracy on remaining test samples
-        Returns mean accuracy across tasks.
-        """
         accs = []
         for task in task_datasets:
             acc = self._eval_one_task(
@@ -168,7 +152,6 @@ class MetaLearner:
 
         support_set, eval_set = random_split(test_dataset, [few_shot_len, eval_len])
 
-        # Few-shot fine-tune
         model = copy.deepcopy(self.meta_model).to(self.device)
         optimizer = optim.Adam(model.parameters(), lr=adaptation_lr)
         model.train()
@@ -183,10 +166,8 @@ class MetaLearner:
                 loss.backward()
                 optimizer.step()
 
-        # Ranking accuracy
         model.eval()
-        correct = 0
-        total_samples = 0
+        correct = total_samples = 0
         eval_loader = DataLoader(eval_set, batch_size=data_batch_size, shuffle=False)
         with torch.no_grad():
             for emb_a, emb_b, p in eval_loader:
@@ -194,8 +175,7 @@ class MetaLearner:
                 emb_b = emb_b.to(self.device)
                 p     = p.to(self.device)
                 pred  = (model(emb_b) > model(emb_a)).float()
-                true  = (p > 0.5).float()
-                correct += (pred == true).sum().item()
+                correct       += (pred == (p > 0.5).float()).sum().item()
                 total_samples += len(p)
 
         return correct / total_samples if total_samples else 0.0

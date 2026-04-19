@@ -191,10 +191,17 @@ def build_task(
         print(f"  [skip] {annotation_path} — only {len(pairs)} valid pairs")
         return None
 
+    # Pair augmentation: add symmetric (B,A,1-p) before splitting
+    augmented = pairs + [
+        {**r, "block_a": r["block_b"], "block_b": r["block_a"],
+         "comparisons_avg": 1.0 - r["comparisons_avg"]}
+        for r in pairs
+    ]
+
     blocks = load_blocks(blocks_path)
     embeddings = compute_embeddings(moment_model, blocks, device=device)
 
-    dataset = PairwiseDataset(embeddings, pairs)
+    dataset = PairwiseDataset(embeddings, augmented)
     if len(dataset) < 10:
         print(f"  [skip] {annotation_path} — only {len(dataset)} usable pairs")
         return None

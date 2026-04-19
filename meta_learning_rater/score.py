@@ -15,6 +15,8 @@ python -m meta_learning_rater.score \
     --model  meta_learning_rater/checkpoints/tsrater.pth \
     --annotation datasets/electricity/annotation.jsonl
 
+# 若使用 per-dataset rater，将 --model 替换为对应数据集的 checkpoint（如 rater_electricity.pth）即可
+
 # Batch: score all datasets in dataset_configs.json
 python -m meta_learning_rater.score \
     --config annotation/dataset_configs.json \
@@ -200,7 +202,11 @@ def main() -> None:
     parser.add_argument("--config",  default=None,
                         help="dataset_configs.json path (batch mode — scores all datasets)")
 
-    parser.add_argument("--model",       required=True, help="ScoreModel .pth checkpoint")
+    parser.add_argument("--model",       default=None,
+                        help="ScoreModel .pth checkpoint (single shared model, used for meta-learning rater)")
+    parser.add_argument("--model_dir",   default=None,
+                        help="Directory containing per-dataset checkpoints named rater_<name>.pth "
+                             "(used for single-dataset rater, batch mode only)")
     parser.add_argument("--annotation",  default=None,  help="annotation.jsonl for few-shot adapt (single mode)")
     parser.add_argument("--hidden_dim",  type=int, default=256)
     parser.add_argument("--num_layers",  type=int, default=3)
@@ -210,18 +216,51 @@ def main() -> None:
     parser.add_argument("--device",      default=None)
     args = parser.parse_args()
 
+    if not args.model and not args.model_dir:
+        parser.error("Provide either --model (shared checkpoint) or --model_dir (per-dataset checkpoints)")
+
     if args.config:
-        score_all_datasets(
-            config_path=args.config,
-            checkpoint_path=args.model,
-            hidden_dim=args.hidden_dim,
-            num_layers=args.num_layers,
-            adaptation_steps=args.adapt_steps,
-            adaptation_lr=args.adapt_lr,
-            few_shot_n=args.few_shot_n,
-            device=args.device,
-        )
+        if args.model_dir:
+            # Per-dataset checkpoints: rater_<name>.pth
+            with open(args.config, "r", encoding="utf-8") as f:
+                configs = json.load(f)
+            model_dir = Path(args.model_dir)
+            for cfg in configs:
+                blocks_path     = Path(cfg["dataset"])
+                annotation_path = Path(cfg["output"])
+                name            = blocks_path.parent.name
+                ckpt            = model_dir / f"rater_{name}.pth"
+                if not ckpt.exists():
+                    print(f"  [skip] {name}: checkpoint not found ({ckpt})")
+                    continue
+                output_path = blocks_path.parent / "scores.jsonl"
+                print(f"  [{name}]")
+                score_dataset(
+                    blocks_path=blocks_path,
+                    checkpoint_path=ckpt,
+                    output_path=output_path,
+                    annotation_path=annotation_path if annotation_path.exists() else None,
+                    hidden_dim=args.hidden_dim,
+                    num_layers=args.num_layers,
+                    adaptation_steps=args.adapt_steps,
+                    adaptation_lr=args.adapt_lr,
+                    few_shot_n=args.few_shot_n,
+                    device=args.device,
+                )
+        else:
+            score_all_datasets(
+                config_path=args.config,
+                checkpoint_path=args.model,
+                hidden_dim=args.hidden_dim,
+                num_layers=args.num_layers,
+                adaptation_steps=args.adapt_steps,
+                adaptation_lr=args.adapt_lr,
+                few_shot_n=args.few_shot_n,
+                device=args.device,
+            )
     elif args.blocks:
+        if not args.model:
+            parser.error("--model is required for single dataset mode")
         if not args.output:
             args.output = str(Path(args.blocks).parent / "scores.jsonl")
         score_dataset(

@@ -34,6 +34,13 @@ Filtered datasets (hint-label consistent):
         --seed_offset 1000000 \
         --output training/data/inspector_val.jsonl \
         --stats
+
+    python -m training.synthesis.build_dataset \
+        --n_samples 500 \
+        --heavy_prob 0.01 \
+        --seed_offset 2000000 \
+        --output training/data/comparison_val.jsonl \
+        --stats
 """
 import argparse
 import json

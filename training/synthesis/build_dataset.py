@@ -8,7 +8,7 @@ Usage:
     python -m training.synthesis.build_dataset --n_samples 10 --output training/data/test.jsonl --visualize
 
 Filtered datasets (hint-label consistent):
-    # 训练集：多生成以补偿过滤损耗（6000 → 约 4000~4500 有效）
+    # Training set: generate extra examples to offset filtering loss (6,000 -> about 4,000--4,500 retained).
     python -m training.synthesis.build_dataset \
         --n_samples 4000 \
         --output training/data/perceiver_train_filtered.jsonl \
@@ -21,7 +21,7 @@ Filtered datasets (hint-label consistent):
         --output training/data/inspector_train.jsonl \
         --stats
 
-    # 验证集：seed_offset 不变，保持和原 val 不重叠
+    # Validation set: use a fixed seed_offset to avoid overlap with the original validation set.
     python -m training.synthesis.build_dataset \
         --n_samples 500 \
         --seed_offset 1000000 \

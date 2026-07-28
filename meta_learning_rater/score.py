@@ -15,7 +15,7 @@ python -m meta_learning_rater.score \
     --model  meta_learning_rater/checkpoints/tsrater.pth \
     --annotation datasets/electricity/annotation.jsonl
 
-# 若使用 per-dataset rater，将 --model 替换为对应数据集的 checkpoint（如 rater_electricity.pth）即可
+# For a per-dataset rater, replace --model with that dataset's checkpoint (e.g., rater_electricity.pth).
 
 # Batch: score all datasets in dataset_configs.json
 python -m meta_learning_rater.score \

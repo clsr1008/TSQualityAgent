@@ -52,8 +52,8 @@ from pathlib import Path
 import numpy as np
 import torch
 
-# evaluation/ 内部的 import 都是相对路径 (e.g. `from dataset import ...`)
-# 把 evaluation/ 加入 sys.path 以保持兼容
+# Imports inside evaluation/ use relative module paths (e.g. `from dataset import ...`).
+# Add evaluation/ to sys.path for compatibility.
 sys.path.insert(0, str(Path(__file__).parent))
 
 from configure_params import configure_model_params, print_experiment_results
